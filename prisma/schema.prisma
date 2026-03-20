@@ -1,0 +1,70 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+model Job {
+  id         Int      @id @default(autoincrement())
+  jobNumber  String   @unique @map("job_number")
+  name       String
+  customer   String?
+  status     String?  @default("Active")
+  createdAt  DateTime @default(now()) @db.Timestamp(6) @map("created_at")
+  updatedAt  DateTime @default(now()) @db.Timestamp(6) @map("updated_at")
+
+  @@map("jobs")
+}
+
+model JobStock {
+  id           Int      @id @default(autoincrement())
+  jobNumber    String   @map("job_number")
+  materialName String   @map("material_name")
+  description  String?
+  unit         String
+  quantity     Decimal  @default(0) @db.Decimal
+  vendor       String?
+  poNumber     String?  @map("po_number")
+  location     String?
+  status       String?  @default("available")
+  createdAt    DateTime @default(now()) @db.Timestamp(6) @map("created_at")
+  updatedAt    DateTime @default(now()) @db.Timestamp(6) @map("updated_at")
+
+  @@map("job_stock")
+}
+
+model MaterialCatalog {
+  id            Int      @id @default(autoincrement())
+  name          String   @unique
+  category      String?
+  defaultUnit   String?  @map("default_unit")
+  defaultVendor String?  @map("default_vendor")
+  description   String?
+  active        Boolean  @default(true)
+  createdAt     DateTime @default(now()) @db.Timestamp(6) @map("created_at")
+  updatedAt     DateTime @default(now()) @db.Timestamp(6) @map("updated_at")
+
+  @@map("material_catalog")
+}
+
+model Material {
+  id           Int      @id @default(autoincrement())
+  job          String
+  item         String
+  category     String
+  orderedQty   Int      @default(0) @map("ordered_qty")
+  receivedQty  Int      @default(0) @map("received_qty")
+  allocatedQty Int      @default(0) @map("allocated_qty")
+  unit         String
+  vendor       String
+  status       String
+  location     String
+  poNumber     String?  @map("po_number")
+  createdAt    DateTime @default(now()) @db.Timestamp(6) @map("created_at")
+  updatedAt    DateTime @default(now()) @db.Timestamp(6) @map("updated_at")
+
+  @@map("materials")
+}
