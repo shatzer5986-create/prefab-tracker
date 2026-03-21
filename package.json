@@ -30,3 +30,10 @@
     "typescript": "^5"
   }
 }
+{
+  "scripts": {
+    "dev": "next dev",
+    "build": "prisma generate && next build",
+    "start": "next start"
+  }
+}
