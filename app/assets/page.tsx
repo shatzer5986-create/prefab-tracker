@@ -7,75 +7,24 @@ import AppShell from "@/components/AppShell";
 import Section from "@/components/Section";
 import StatCard from "@/components/StatCard";
 
-import type { AppData, EquipmentItem } from "@/types";
-
-const STORAGE_KEY = "prefab-tracker-v7";
-const MASTER_EQUIPMENT_KEY = "master-equipment-inventory-v1";
-
-const fallbackData: AppData = {
-  jobs: [],
-  materials: [],
-  prefab: [],
-  purchaseOrders: [],
-  assemblies: [],
-  assemblyBom: [],
-  regularInventory: [],
-  materialMovements: [],
-  toolInventory: [],
-  equipmentInventory: [],
-  inventoryLogs: [],
-  requests: [],
-  notifications: [],
-  tickets: [],
-  employees: [],
-};
-
-function loadStoredAppData(): AppData {
-  if (typeof window === "undefined") return fallbackData;
-
-  try {
-    const raw = localStorage.getItem(STORAGE_KEY);
-    if (!raw) return fallbackData;
-    const parsed = JSON.parse(raw) as AppData;
-
-    return {
-      ...fallbackData,
-      ...parsed,
-      equipmentInventory: Array.isArray(parsed.equipmentInventory)
-        ? parsed.equipmentInventory
-        : [],
-    };
-  } catch {
-    return fallbackData;
-  }
-}
-
-function loadStoredEquipment(): EquipmentItem[] {
-  if (typeof window === "undefined") return [];
-
-  try {
-    const raw = localStorage.getItem(MASTER_EQUIPMENT_KEY);
-    if (!raw) return [];
-    const parsed = JSON.parse(raw);
-    return Array.isArray(parsed) ? parsed : [];
-  } catch {
-    return [];
-  }
-}
+import type { EquipmentItem } from "@/types";
 
 export default function AssetsDashboardPage() {
   const [assets, setAssets] = useState<EquipmentItem[]>([]);
 
   useEffect(() => {
-    const masterAssets = loadStoredEquipment();
-
-    if (masterAssets.length > 0) {
-      setAssets(masterAssets);
-      return;
+    async function loadAssets() {
+      try {
+        const response = await fetch("/api/assets", { cache: "no-store" });
+        const data = response.ok ? await response.json() : [];
+        setAssets(Array.isArray(data) ? data : []);
+      } catch (error) {
+        console.error("Loading assets failed:", error);
+        setAssets([]);
+      }
     }
 
-    const parsed = loadStoredAppData();
-    setAssets(parsed.equipmentInventory || []);
+    loadAssets();
   }, []);
 
   const trailers = useMemo(

@@ -12,27 +12,7 @@ import EquipmentTable from "@/components/EquipmentTable";
 
 import type { AppData, Employee, EquipmentItem } from "@/types";
 
-const STORAGE_KEY = "prefab-tracker-v7";
-const MASTER_EQUIPMENT_KEY = "master-equipment-inventory-v1";
 const EXTRA_JOB_OPTIONS = ["Yard", "Tool Room", "Shop", "WH1", "WH2"];
-
-const fallbackData: AppData = {
-  jobs: [],
-  materials: [],
-  prefab: [],
-  purchaseOrders: [],
-  assemblies: [],
-  assemblyBom: [],
-  regularInventory: [],
-  materialMovements: [],
-  toolInventory: [],
-  equipmentInventory: [],
-  inventoryLogs: [],
-  requests: [],
-  notifications: [],
-  tickets: [],
-  employees: [],
-};
 
 function safeString(value: unknown) {
   return typeof value === "string" ? value.trim() : "";
@@ -99,54 +79,6 @@ function parseCsvDate(value: unknown) {
   return raw;
 }
 
-function loadStoredAppData(): AppData {
-  if (typeof window === "undefined") return fallbackData;
-
-  try {
-    const raw = localStorage.getItem(STORAGE_KEY);
-    if (!raw) return fallbackData;
-
-    const parsed = JSON.parse(raw) as AppData;
-    return {
-      ...fallbackData,
-      ...parsed,
-      jobs: Array.isArray(parsed.jobs) ? parsed.jobs : [],
-      equipmentInventory: Array.isArray(parsed.equipmentInventory)
-        ? parsed.equipmentInventory
-        : [],
-      notifications: Array.isArray(parsed.notifications) ? parsed.notifications : [],
-      employees: Array.isArray(parsed.employees) ? parsed.employees : [],
-    };
-  } catch {
-    return fallbackData;
-  }
-}
-
-function loadStoredEquipment(): EquipmentItem[] {
-  if (typeof window === "undefined") return [];
-
-  try {
-    const raw = localStorage.getItem(MASTER_EQUIPMENT_KEY);
-    if (!raw) return [];
-    const parsed = JSON.parse(raw);
-    return Array.isArray(parsed) ? parsed : [];
-  } catch {
-    return [];
-  }
-}
-
-function saveEquipmentInventory(rows: EquipmentItem[]) {
-  localStorage.setItem(MASTER_EQUIPMENT_KEY, JSON.stringify(rows));
-
-  const current = loadStoredAppData();
-  const updated: AppData = {
-    ...current,
-    equipmentInventory: rows,
-  };
-
-  localStorage.setItem(STORAGE_KEY, JSON.stringify(updated));
-}
-
 function buildRowObjectFromHeaders(
   headers: string[],
   values: unknown[]
@@ -191,89 +123,93 @@ function buildEquipmentMatchKey(
   ].join("||");
 }
 
-function mergeImportedEquipment(existing: EquipmentItem[], imported: EquipmentItem[]) {
-  const map = new Map<string, EquipmentItem>();
+function mergeImportedEquipment(
+  existing: EquipmentItem[],
+  imported: Omit<EquipmentItem, "id">[]
+) {
+  const existingByKey = new Map<string, EquipmentItem>();
 
   for (const item of existing) {
-    map.set(buildEquipmentMatchKey(item), item);
+    existingByKey.set(buildEquipmentMatchKey(item), item);
   }
+
+  const toCreate: Omit<EquipmentItem, "id">[] = [];
+  const toUpdate: EquipmentItem[] = [];
 
   for (const item of imported) {
     const key = buildEquipmentMatchKey(item);
-    const existingMatch = map.get(key);
+    const existingMatch = existingByKey.get(key);
 
     if (existingMatch) {
-      map.set(key, {
+      toUpdate.push({
         ...existingMatch,
         ...item,
         id: existingMatch.id,
       });
     } else {
-      map.set(key, item);
+      toCreate.push(item);
     }
   }
 
-  return Array.from(map.values()).sort((a, b) => b.id - a.id);
+  return { toCreate, toUpdate };
 }
 
 function makeEmptyEquipmentForm(
   assetType: EquipmentItem["assetType"]
 ): Omit<EquipmentItem, "id"> {
- return {
-  assetType,
-  quantityAvailable: 1,
-  assetNumber: "",
-  jobNumber: "",
-  assignedTo: "",
-  assignmentType: "Job",
-  toolRoomLocation: "",
-  year: "",
-  manufacturer: "",
-  model: "",
-  modelNumber: "",
-  description: assetType,
-  category: assetType,
-  itemNumber: "",
-  barcode: "",
-  serialNumber: "",
-  licensePlate: "",
-  vinSerial: "",
-  engineSerialNumber: "",
-  ein: "",
-  gvwr: "",
-  driverProject: "",
-  indexNumber: "",
-  purchaseCost: "",
-  purchaseDate: "",
-  tier: "",
-  lowUse: "",
-  samsara: "",
-  powered: "",
-  hourMeterStart2026: "",
-  hourMeterUpdate: "",
-  dateOfUpdate: "",
-  hourMeterEnd2026: "",
-  currentYtd: "",
-  lessThan200Hours: "",
-  transferDateIn: "",
-  transferDateOut: "",
-  status: "Working",
-  notes: "",
-};
+  return {
+    assetType,
+    quantityAvailable: 1,
+    assetNumber: "",
+    jobNumber: "",
+    assignedTo: "",
+    assignmentType: "Job",
+    toolRoomLocation: "",
+    year: "",
+    manufacturer: "",
+    model: "",
+    modelNumber: "",
+    description: assetType,
+    category: assetType,
+    itemNumber: "",
+    barcode: "",
+    serialNumber: "",
+    licensePlate: "",
+    vinSerial: "",
+    engineSerialNumber: "",
+    ein: "",
+    gvwr: "",
+    driverProject: "",
+    indexNumber: "",
+    purchaseCost: "",
+    purchaseDate: "",
+    tier: "",
+    lowUse: "",
+    samsara: "",
+    powered: "",
+    hourMeterStart2026: "",
+    hourMeterUpdate: "",
+    dateOfUpdate: "",
+    hourMeterEnd2026: "",
+    currentYtd: "",
+    lessThan200Hours: "",
+    transferDateIn: "",
+    transferDateOut: "",
+    status: "Working",
+    notes: "",
+  };
 }
 
 function parseImportedFleetEquipmentRow(
   row: Record<string, unknown>,
-  id: number,
   assetType: EquipmentItem["assetType"]
-): EquipmentItem {
+): Omit<EquipmentItem, "id"> {
   if (assetType === "Trailer") {
     const jobNumber = safeString(getCell(row, "PROJECT"));
     const assignedTo = "";
     const assignmentType = normalizeAssignmentType(jobNumber, assignedTo);
 
     return {
-      id,
       ...makeEmptyEquipmentForm("Trailer"),
       assetType: "Trailer",
       quantityAvailable: parseQty(getCell(row, "QTY"), 1),
@@ -302,7 +238,6 @@ function parseImportedFleetEquipmentRow(
     const assignedTo = assignmentType === "Person" ? rawDriverProject : "";
 
     return {
-      id,
       ...makeEmptyEquipmentForm("Vehicle"),
       assetType: "Vehicle",
       quantityAvailable: parseQty(getCell(row, "QTY"), 1),
@@ -329,7 +264,6 @@ function parseImportedFleetEquipmentRow(
   const assignmentType = normalizeAssignmentType(jobNumber, assignedTo);
 
   return {
-    id,
     ...makeEmptyEquipmentForm("Equipment"),
     assetType: "Equipment",
     quantityAvailable: parseQty(getCell(row, "QTY"), 1),
@@ -380,13 +314,32 @@ export default function AssetManagerPage({
   const [form, setForm] = useState<Omit<EquipmentItem, "id">>(
     makeEmptyEquipmentForm(assetType)
   );
+  const [isBusy, setIsBusy] = useState(false);
 
   useEffect(() => {
-    const parsed = loadStoredAppData();
-    setJobs(parsed.jobs || []);
-    setEmployees(parsed.employees || []);
-    setAllAssets(loadStoredEquipment());
-  }, []);
+    async function loadData() {
+      try {
+        const [jobsRes, assetsRes] = await Promise.all([
+          fetch("/api/jobs", { cache: "no-store" }),
+          fetch(`/api/assets?assetType=${encodeURIComponent(assetType)}`, {
+            cache: "no-store",
+          }),
+        ]);
+
+        const jobsData = jobsRes.ok ? await jobsRes.json() : [];
+        const assetsData = assetsRes.ok ? await assetsRes.json() : [];
+
+        setJobs(Array.isArray(jobsData) ? jobsData : []);
+        setAllAssets(Array.isArray(assetsData) ? assetsData : []);
+      } catch (error) {
+        console.error("Loading assets failed:", error);
+        setJobs([]);
+        setAllAssets([]);
+      }
+    }
+
+    loadData();
+  }, [assetType]);
 
   const jobOptions = useMemo(() => {
     return dedupeStrings([
@@ -428,7 +381,16 @@ export default function AssetManagerPage({
     setEditingId(null);
   }
 
-  function handleSave() {
+  async function reloadAssets() {
+    const response = await fetch(`/api/assets?assetType=${encodeURIComponent(assetType)}`, {
+      cache: "no-store",
+    });
+    if (!response.ok) throw new Error("Failed to load assets");
+    const data = await response.json();
+    setAllAssets(Array.isArray(data) ? data : []);
+  }
+
+  async function handleSave() {
     const hasMinimumData =
       safeString(form.assetNumber) ||
       safeString(form.description) ||
@@ -444,16 +406,13 @@ export default function AssetManagerPage({
       return;
     }
 
-    const current = loadStoredEquipment();
-    let updated: EquipmentItem[] = [];
-
     const nextAssignmentType = normalizeAssignmentType(
       safeString(form.jobNumber),
       safeString(form.assignedTo),
       safeString(form.assignmentType)
     );
 
-    const normalizedForm: Omit<EquipmentItem, "id"> = {
+    const payload: Omit<EquipmentItem, "id"> = {
       ...form,
       assetType,
       jobNumber: nextAssignmentType === "Job" ? safeString(form.jobNumber) : "",
@@ -473,21 +432,34 @@ export default function AssetManagerPage({
       status: form.status === "Damaged" ? "Damaged" : "Working",
     };
 
-    if (editingId !== null) {
-      updated = current.map((item) =>
-        item.id === editingId ? { ...item, ...normalizedForm } : item
-      );
-    } else {
-      const newRow: EquipmentItem = {
-        id: Date.now(),
-        ...normalizedForm,
-      };
-      updated = [newRow, ...current];
-    }
+    try {
+      setIsBusy(true);
 
-    setAllAssets(updated);
-    saveEquipmentInventory(updated);
-    resetForm();
+      const response =
+        editingId !== null
+          ? await fetch(`/api/assets/${editingId}`, {
+              method: "PUT",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify(payload),
+            })
+          : await fetch("/api/assets", {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify(payload),
+            });
+
+      if (!response.ok) {
+        throw new Error(editingId !== null ? "Failed to update asset" : "Failed to create asset");
+      }
+
+      await reloadAssets();
+      resetForm();
+    } catch (error) {
+      console.error("Saving asset failed:", error);
+      alert("Failed to save asset.");
+    } finally {
+      setIsBusy(false);
+    }
   }
 
   function handleEdit(row: EquipmentItem) {
@@ -544,13 +516,28 @@ export default function AssetManagerPage({
     window.scrollTo({ top: 0, behavior: "smooth" });
   }
 
-  function handleDelete(id: number) {
-    const updated = allAssets.filter((item) => item.id !== id);
-    setAllAssets(updated);
-    saveEquipmentInventory(updated);
+  async function handleDelete(id: number) {
+    try {
+      setIsBusy(true);
 
-    if (editingId === id) {
-      resetForm();
+      const response = await fetch(`/api/assets/${id}`, {
+        method: "DELETE",
+      });
+
+      if (!response.ok) {
+        throw new Error("Failed to delete asset");
+      }
+
+      await reloadAssets();
+
+      if (editingId === id) {
+        resetForm();
+      }
+    } catch (error) {
+      console.error("Deleting asset failed:", error);
+      alert("Failed to delete asset.");
+    } finally {
+      setIsBusy(false);
     }
   }
 
@@ -561,8 +548,10 @@ export default function AssetManagerPage({
     Papa.parse<unknown[]>(file, {
       header: false,
       skipEmptyLines: true,
-      complete: (results) => {
+      complete: async (results) => {
         try {
+          setIsBusy(true);
+
           const rawMatrix = Array.isArray(results.data) ? results.data : [];
           const parsedRows = parseFleetCsvRows(rawMatrix);
 
@@ -595,25 +584,51 @@ export default function AssetManagerPage({
                 safeString(getCell(row, "LICENSE"))
               );
             })
-            .map((row, index) =>
-              parseImportedFleetEquipmentRow(row, Date.now() + index, assetType)
-            );
+            .map((row) => parseImportedFleetEquipmentRow(row, assetType));
 
           if (!imported.length) {
             alert(`No usable ${assetType.toLowerCase()} rows found after parsing.`);
             return;
           }
 
-          const current = loadStoredEquipment();
-          const merged = mergeImportedEquipment(current, imported);
+          const { toCreate, toUpdate } = mergeImportedEquipment(rows, imported);
 
-          setAllAssets(merged);
-          saveEquipmentInventory(merged);
+          for (const row of toUpdate) {
+            const response = await fetch(`/api/assets/${row.id}`, {
+              method: "PUT",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({
+                ...row,
+              }),
+            });
 
-          alert(`Imported ${imported.length} ${assetType.toLowerCase()} row(s).`);
+            if (!response.ok) {
+              throw new Error(`Failed to update asset ${row.assetNumber || row.id}`);
+            }
+          }
+
+          for (const row of toCreate) {
+            const response = await fetch("/api/assets", {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify(row),
+            });
+
+            if (!response.ok) {
+              throw new Error(`Failed to create asset ${row.assetNumber || ""}`);
+            }
+          }
+
+          await reloadAssets();
+
+          alert(
+            `Imported ${imported.length} ${assetType.toLowerCase()} row(s). Created ${toCreate.length}, updated ${toUpdate.length}.`
+          );
         } catch (error) {
           console.error(`${assetType} CSV import failed:`, error);
           alert(`Failed to import ${assetType.toLowerCase()} CSV file.`);
+        } finally {
+          setIsBusy(false);
         }
       },
       error: (error) => {
@@ -690,17 +705,29 @@ export default function AssetManagerPage({
       active={activeKey}
       actions={
         <>
-          <label style={buttonStyle}>
-            Import {title} CSV
+          <label
+            style={{
+              ...buttonStyle,
+              opacity: isBusy ? 0.7 : 1,
+              cursor: isBusy ? "not-allowed" : "pointer",
+            }}
+          >
+            {isBusy ? "Working..." : `Import ${title} CSV`}
             <input
               type="file"
               accept=".csv,text/csv"
               onChange={importFleetCsv}
               style={{ display: "none" }}
+              disabled={isBusy}
             />
           </label>
 
-          <button type="button" onClick={exportAssetsReport} style={buttonStyle}>
+          <button
+            type="button"
+            onClick={exportAssetsReport}
+            style={buttonStyle}
+            disabled={isBusy}
+          >
             Export {title} Report
           </button>
         </>
