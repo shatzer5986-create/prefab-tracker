@@ -10,8 +10,12 @@ export async function GET() {
     return NextResponse.json(jobs);
   } catch (error) {
     console.error("GET /api/jobs failed:", error);
+
     return NextResponse.json(
-      { error: "Failed to load jobs" },
+      {
+        error: "Failed to load jobs",
+        details: error instanceof Error ? error.message : String(error),
+      },
       { status: 500 }
     );
   }
@@ -23,43 +27,58 @@ export async function POST(req: NextRequest) {
 
     const jobNumber = String(body.jobNumber ?? "").trim();
     const name = String(body.name ?? "").trim();
-    const customer = String(body.customer ?? "").trim();
-    const status = String(body.status ?? "Active").trim();
+    const customer =
+      body.customer === undefined || body.customer === null
+        ? null
+        : String(body.customer).trim() || null;
+    const status =
+      body.status === undefined || body.status === null
+        ? "Active"
+        : String(body.status).trim() || "Active";
 
-    if (!jobNumber || !name) {
+    if (!jobNumber) {
       return NextResponse.json(
-        { error: "jobNumber and name are required" },
+        { error: "Job number is required" },
         { status: 400 }
       );
     }
 
-    const created = await prisma.job.create({
-      data: {
-        jobNumber,
-        name,
-        customer: customer || null,
-        status: status || "Active",
-      },
+    if (!name) {
+      return NextResponse.json(
+        { error: "Job name is required" },
+        { status: 400 }
+      );
+    }
+
+    const existing = await prisma.job.findUnique({
+      where: { jobNumber },
     });
 
-    return NextResponse.json(created, { status: 201 });
-  } catch (error: unknown) {
-    console.error("POST /api/jobs failed:", error);
-
-    if (
-      typeof error === "object" &&
-      error !== null &&
-      "code" in error &&
-      error.code === "P2002"
-    ) {
+    if (existing) {
       return NextResponse.json(
-        { error: "A job with that job number already exists" },
+        { error: "A job with that number already exists" },
         { status: 409 }
       );
     }
 
+    const job = await prisma.job.create({
+      data: {
+        jobNumber,
+        name,
+        customer,
+        status,
+      },
+    });
+
+    return NextResponse.json(job, { status: 201 });
+  } catch (error) {
+    console.error("POST /api/jobs failed:", error);
+
     return NextResponse.json(
-      { error: "Failed to create job" },
+      {
+        error: "Failed to create job",
+        details: error instanceof Error ? error.message : String(error),
+      },
       { status: 500 }
     );
   }

@@ -10,29 +10,9 @@ import StatCard from "@/components/StatCard";
 import ToolForm from "@/components/ToolForm";
 import ToolTable from "@/components/ToolTable";
 
-import type { AppData, Employee, Job, ToolItem } from "@/types";
+import type { Employee, Job, ToolItem } from "@/types";
 
-const STORAGE_KEY = "prefab-tracker-v7";
-const MASTER_TOOLS_KEY = "master-tool-inventory-v1";
 const EXTRA_JOB_OPTIONS = ["Yard", "Tool Room", "Shop", "WH1", "WH2"];
-
-const fallbackData: AppData = {
-  jobs: [],
-  materials: [],
-  prefab: [],
-  purchaseOrders: [],
-  assemblies: [],
-  assemblyBom: [],
-  regularInventory: [],
-  materialMovements: [],
-  toolInventory: [],
-  equipmentInventory: [],
-  inventoryLogs: [],
-  requests: [],
-  notifications: [],
-  tickets: [],
-  employees: [],
-};
 
 const emptyToolForm: Omit<ToolItem, "id"> = {
   category: "",
@@ -139,39 +119,41 @@ function buildToolMatchKey(
   ].join("||");
 }
 
-function mergeImportedTools(existing: ToolItem[], imported: ToolItem[]) {
-  const map = new Map<string, ToolItem>();
+function mergeImportedTools(existing: ToolItem[], imported: Omit<ToolItem, "id">[]) {
+  const existingByKey = new Map<string, ToolItem>();
 
   for (const item of existing) {
-    map.set(buildToolMatchKey(item), item);
+    existingByKey.set(buildToolMatchKey(item), item);
   }
+
+  const toCreate: Omit<ToolItem, "id">[] = [];
+  const toUpdate: ToolItem[] = [];
 
   for (const item of imported) {
     const key = buildToolMatchKey(item);
-    const existingMatch = map.get(key);
+    const existingMatch = existingByKey.get(key);
 
     if (existingMatch) {
-      map.set(key, {
+      toUpdate.push({
         ...existingMatch,
         ...item,
         id: existingMatch.id,
       });
     } else {
-      map.set(key, item);
+      toCreate.push(item);
     }
   }
 
-  return Array.from(map.values()).sort((a, b) => b.id - a.id);
+  return { toCreate, toUpdate };
 }
 
-function parseImportedToolRow(row: Record<string, unknown>, id: number): ToolItem {
+function parseImportedToolRow(row: Record<string, unknown>): Omit<ToolItem, "id"> {
   const jobNumber = safeString(getCell(row, "Job#"));
   const assignedTo = safeString(getCell(row, "Assigned to"));
   const assignmentType = normalizeAssignmentType(jobNumber, assignedTo);
   const status = normalizeToolStatus(getCell(row, "Status"));
 
   return {
-    id,
     category: safeString(getCell(row, "Category")),
     barcode: safeString(getCell(row, "Barcode")),
     itemNumber: safeString(getCell(row, "Item Number")),
@@ -190,63 +172,35 @@ function parseImportedToolRow(row: Record<string, unknown>, id: number): ToolIte
   };
 }
 
-function loadStoredAppData(): AppData {
-  if (typeof window === "undefined") return fallbackData;
-
-  try {
-    const raw = localStorage.getItem(STORAGE_KEY);
-    if (!raw) return fallbackData;
-    const parsed = JSON.parse(raw) as AppData;
-
-    return {
-      ...fallbackData,
-      ...parsed,
-      jobs: Array.isArray(parsed.jobs) ? parsed.jobs : [],
-      toolInventory: Array.isArray(parsed.toolInventory) ? parsed.toolInventory : [],
-      employees: Array.isArray(parsed.employees) ? parsed.employees : [],
-    };
-  } catch {
-    return fallbackData;
-  }
-}
-
-function loadStoredTools(): ToolItem[] {
-  if (typeof window === "undefined") return [];
-
-  try {
-    const raw = localStorage.getItem(MASTER_TOOLS_KEY);
-    if (!raw) return [];
-    const parsed = JSON.parse(raw);
-    return Array.isArray(parsed) ? parsed : [];
-  } catch {
-    return [];
-  }
-}
-
-function saveToolInventory(rows: ToolItem[]) {
-  localStorage.setItem(MASTER_TOOLS_KEY, JSON.stringify(rows));
-
-  const current = loadStoredAppData();
-  const updated: AppData = {
-    ...current,
-    toolInventory: rows,
-  };
-
-  localStorage.setItem(STORAGE_KEY, JSON.stringify(updated));
-}
-
 export default function ToolManagerPage() {
   const [jobs, setJobs] = useState<Job[]>([]);
   const [employees, setEmployees] = useState<Employee[]>([]);
   const [tools, setTools] = useState<ToolItem[]>([]);
   const [editingId, setEditingId] = useState<number | null>(null);
   const [form, setForm] = useState<Omit<ToolItem, "id">>(emptyToolForm);
+  const [isBusy, setIsBusy] = useState(false);
 
   useEffect(() => {
-    const parsed = loadStoredAppData();
-    setJobs(parsed.jobs || []);
-    setEmployees(parsed.employees || []);
-    setTools(loadStoredTools());
+    async function loadData() {
+      try {
+        const [jobsRes, toolsRes] = await Promise.all([
+          fetch("/api/jobs", { cache: "no-store" }),
+          fetch("/api/tools", { cache: "no-store" }),
+        ]);
+
+        const jobsData = jobsRes.ok ? await jobsRes.json() : [];
+        const toolsData = toolsRes.ok ? await toolsRes.json() : [];
+
+        setJobs(Array.isArray(jobsData) ? jobsData : []);
+        setTools(Array.isArray(toolsData) ? toolsData : []);
+      } catch (error) {
+        console.error("Loading tools page data failed:", error);
+        setJobs([]);
+        setTools([]);
+      }
+    }
+
+    loadData();
   }, []);
 
   const jobOptions = useMemo(() => {
@@ -294,7 +248,14 @@ export default function ToolManagerPage() {
     setEditingId(null);
   }
 
-  function handleSave() {
+  async function reloadTools() {
+    const response = await fetch("/api/tools", { cache: "no-store" });
+    if (!response.ok) throw new Error("Failed to load tools");
+    const data = await response.json();
+    setTools(Array.isArray(data) ? data : []);
+  }
+
+  async function handleSave() {
     const hasMinimumData =
       safeString(form.description) ||
       safeString(form.itemNumber) ||
@@ -310,16 +271,13 @@ export default function ToolManagerPage() {
       return;
     }
 
-    const currentTools = loadStoredTools();
-    let updatedTools: ToolItem[] = [];
-
     const nextAssignmentType = normalizeAssignmentType(
       safeString(form.jobNumber),
       safeString(form.assignedTo),
       safeString(form.assignmentType)
     );
 
-    const normalizedForm: Omit<ToolItem, "id"> = {
+    const payload: Omit<ToolItem, "id"> = {
       ...form,
       jobNumber: nextAssignmentType === "Job" ? safeString(form.jobNumber) : "",
       assignmentType: nextAssignmentType,
@@ -336,22 +294,34 @@ export default function ToolManagerPage() {
       status: normalizeToolStatus(form.status),
     };
 
-    if (editingId !== null) {
-      updatedTools = currentTools.map((item) =>
-        item.id === editingId ? { ...item, ...normalizedForm } : item
-      );
-    } else {
-      const newTool: ToolItem = {
-        id: Date.now(),
-        ...normalizedForm,
-      };
+    try {
+      setIsBusy(true);
 
-      updatedTools = [newTool, ...currentTools];
+      const response =
+        editingId !== null
+          ? await fetch(`/api/tools/${editingId}`, {
+              method: "PUT",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify(payload),
+            })
+          : await fetch("/api/tools", {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify(payload),
+            });
+
+      if (!response.ok) {
+        throw new Error(editingId !== null ? "Failed to update tool" : "Failed to create tool");
+      }
+
+      await reloadTools();
+      resetForm();
+    } catch (error) {
+      console.error("Saving tool failed:", error);
+      alert("Failed to save tool.");
+    } finally {
+      setIsBusy(false);
     }
-
-    setTools(updatedTools);
-    saveToolInventory(updatedTools);
-    resetForm();
   }
 
   function handleEdit(row: ToolItem) {
@@ -384,13 +354,28 @@ export default function ToolManagerPage() {
     window.scrollTo({ top: 0, behavior: "smooth" });
   }
 
-  function handleDelete(id: number) {
-    const updatedTools = loadStoredTools().filter((item) => item.id !== id);
-    setTools(updatedTools);
-    saveToolInventory(updatedTools);
+  async function handleDelete(id: number) {
+    try {
+      setIsBusy(true);
 
-    if (editingId === id) {
-      resetForm();
+      const response = await fetch(`/api/tools/${id}`, {
+        method: "DELETE",
+      });
+
+      if (!response.ok) {
+        throw new Error("Failed to delete tool");
+      }
+
+      await reloadTools();
+
+      if (editingId === id) {
+        resetForm();
+      }
+    } catch (error) {
+      console.error("Deleting tool failed:", error);
+      alert("Failed to delete tool.");
+    } finally {
+      setIsBusy(false);
     }
   }
 
@@ -401,8 +386,10 @@ export default function ToolManagerPage() {
     Papa.parse<Record<string, unknown>>(file, {
       header: true,
       skipEmptyLines: true,
-      complete: (results) => {
+      complete: async (results) => {
         try {
+          setIsBusy(true);
+
           const rawRows = Array.isArray(results.data) ? results.data : [];
 
           const cleanedRows = rawRows.filter((row) => {
@@ -421,20 +408,59 @@ export default function ToolManagerPage() {
             return;
           }
 
-          const importedTools = cleanedRows.map((row, index) =>
-            parseImportedToolRow(row, Date.now() + index)
+          const importedTools = cleanedRows.map((row) => parseImportedToolRow(row));
+          const { toCreate, toUpdate } = mergeImportedTools(tools, importedTools);
+
+          for (const row of toUpdate) {
+            const response = await fetch(`/api/tools/${row.id}`, {
+              method: "PUT",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({
+                category: row.category,
+                barcode: row.barcode,
+                itemNumber: row.itemNumber,
+                manufacturer: row.manufacturer,
+                model: row.model,
+                description: row.description,
+                quantityAvailable: row.quantityAvailable,
+                jobNumber: row.jobNumber,
+                assignmentType: row.assignmentType,
+                assignedTo: row.assignedTo,
+                toolRoomLocation: row.toolRoomLocation,
+                serialNumber: row.serialNumber,
+                transferDateIn: row.transferDateIn,
+                transferDateOut: row.transferDateOut,
+                status: row.status,
+              }),
+            });
+
+            if (!response.ok) {
+              throw new Error(`Failed to update tool ${row.description || row.itemNumber || row.id}`);
+            }
+          }
+
+          for (const row of toCreate) {
+            const response = await fetch("/api/tools", {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify(row),
+            });
+
+            if (!response.ok) {
+              throw new Error(`Failed to create tool ${row.description || row.itemNumber || ""}`);
+            }
+          }
+
+          await reloadTools();
+
+          alert(
+            `Imported ${importedTools.length} tool row(s). Created ${toCreate.length}, updated ${toUpdate.length}.`
           );
-
-          const currentTools = loadStoredTools();
-          const mergedTools = mergeImportedTools(currentTools, importedTools);
-
-          setTools(mergedTools);
-          saveToolInventory(mergedTools);
-
-          alert(`Imported ${importedTools.length} tool row(s).`);
         } catch (error) {
           console.error("Tool CSV import failed:", error);
           alert("Failed to import tool CSV file.");
+        } finally {
+          setIsBusy(false);
         }
       },
       error: (error) => {
@@ -504,17 +530,29 @@ export default function ToolManagerPage() {
       active="tools"
       actions={
         <>
-          <label style={buttonStyle}>
-            Import Tools from CSV
+          <label
+            style={{
+              ...buttonStyle,
+              opacity: isBusy ? 0.7 : 1,
+              cursor: isBusy ? "not-allowed" : "pointer",
+            }}
+          >
+            {isBusy ? "Working..." : "Import Tools from CSV"}
             <input
               type="file"
               accept=".csv,text/csv"
               onChange={importToolsFromCsv}
               style={{ display: "none" }}
+              disabled={isBusy}
             />
           </label>
 
-          <button type="button" onClick={exportToolsReport} style={buttonStyle}>
+          <button
+            type="button"
+            onClick={exportToolsReport}
+            style={buttonStyle}
+            disabled={isBusy}
+          >
             Export Tools Report
           </button>
         </>

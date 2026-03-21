@@ -8,30 +8,30 @@ datasource db {
 }
 
 model Job {
-  id         Int      @id @default(autoincrement())
-  jobNumber  String   @unique @map("job_number")
-  name       String
-  customer   String?
-  status     String?  @default("Active")
-  createdAt  DateTime @default(now()) @db.Timestamp(6) @map("created_at")
-  updatedAt  DateTime @default(now()) @db.Timestamp(6) @map("updated_at")
+  id        Int      @id @default(autoincrement())
+  jobNumber String   @unique @map("job_number")
+  name      String
+  customer  String?
+  status    String?  @default("Active")
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamp(6)
+  updatedAt DateTime @updatedAt @map("updated_at") @db.Timestamp(6)
 
   @@map("jobs")
 }
 
 model JobStock {
-  id           Int      @id @default(autoincrement())
-  jobNumber    String   @map("job_number")
-  materialName String   @map("material_name")
-  description  String?
-  unit         String
-  quantity     Decimal  @default(0) @db.Decimal
-  vendor       String?
-  poNumber     String?  @map("po_number")
-  location     String?
-  status       String?  @default("available")
-  createdAt    DateTime @default(now()) @db.Timestamp(6) @map("created_at")
-  updatedAt    DateTime @default(now()) @db.Timestamp(6) @map("updated_at")
+  id               Int      @id @default(autoincrement())
+  jobNumber        String   @map("job_number")
+  materialName     String   @map("material_name")
+  description      String?
+  unit             String
+  quantity         Decimal  @default(0) @db.Decimal(12, 2)
+  vendor           String?
+  poNumber         String?  @map("po_number")
+  location         String?
+  status           String?  @default("available")
+  createdAt        DateTime @default(now()) @map("created_at") @db.Timestamp(6)
+  updatedAt        DateTime @updatedAt @map("updated_at") @db.Timestamp(6)
 
   @@map("job_stock")
 }
@@ -44,8 +44,8 @@ model MaterialCatalog {
   defaultVendor String?  @map("default_vendor")
   description   String?
   active        Boolean  @default(true)
-  createdAt     DateTime @default(now()) @db.Timestamp(6) @map("created_at")
-  updatedAt     DateTime @default(now()) @db.Timestamp(6) @map("updated_at")
+  createdAt     DateTime @default(now()) @map("created_at") @db.Timestamp(6)
+  updatedAt     DateTime @updatedAt @map("updated_at") @db.Timestamp(6)
 
   @@map("material_catalog")
 }
@@ -63,8 +63,31 @@ model Material {
   status       String
   location     String
   poNumber     String?  @map("po_number")
-  createdAt    DateTime @default(now()) @db.Timestamp(6) @map("created_at")
-  updatedAt    DateTime @default(now()) @db.Timestamp(6) @map("updated_at")
+  createdAt    DateTime @default(now()) @map("created_at") @db.Timestamp(6)
+  updatedAt    DateTime @updatedAt @map("updated_at") @db.Timestamp(6)
 
   @@map("materials")
+}
+
+model Tool {
+  id                Int      @id @default(autoincrement())
+  category          String?
+  barcode           String?
+  itemNumber        String?  @map("item_number")
+  manufacturer      String?
+  model             String?
+  description       String?
+  quantityAvailable Int      @default(0) @map("quantity_available")
+  jobNumber         String?  @map("job_number")
+  assignmentType    String   @default("Shop") @map("assignment_type")
+  assignedTo        String?  @map("assigned_to")
+  toolRoomLocation  String?  @map("tool_room_location")
+  serialNumber      String?  @map("serial_number")
+  transferDateIn    String?  @map("transfer_date_in")
+  transferDateOut   String?  @map("transfer_date_out")
+  status            String   @default("Working")
+  createdAt         DateTime @default(now()) @map("created_at") @db.Timestamp(6)
+  updatedAt         DateTime @updatedAt @map("updated_at") @db.Timestamp(6)
+
+  @@map("tools")
 }
