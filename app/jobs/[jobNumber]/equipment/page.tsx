@@ -156,9 +156,25 @@ function buildEquipmentSubtitle(item: EquipmentItem) {
 }
 
 function getAvailableQty(item: EquipmentItem) {
-  return Math.max(safeNumber(item.quantityAvailable, 0), 0);
-}
+  const qty = Math.max(safeNumber(item.quantityAvailable, 0), 0);
 
+  if (qty > 0) return qty;
+
+  const assetType = safeString(item.assetType).toLowerCase();
+  const hasUniqueIdentity =
+    !!safeString(item.assetNumber) ||
+    !!safeString(item.serialNumber) ||
+    !!safeString(item.vinSerial) ||
+    !!safeString(item.licensePlate);
+
+  const singleAssetTypes = ["vehicle", "trailer", "equipment"];
+
+  if (singleAssetTypes.includes(assetType) || hasUniqueIdentity) {
+    return 1;
+  }
+
+  return 0;
+}
 function createEmptyRequestLine(): RequestLineDraft {
   return {
     rowId: Date.now() + Math.floor(Math.random() * 100000),
@@ -1101,7 +1117,7 @@ export default function JobEquipmentPage() {
                                 {buildEquipmentSubtitle(item)}
                               </div>
                               <div style={{ fontSize: 12, color: "#a3a3a3" }}>
-                                Qty Assigned: {item.quantityAvailable ?? 0} •{" "}
+                                Qty Assigned: {getAvailableQty(item)} •{" "}
                                 {buildEquipmentLocation(item)}
                               </div>
                             </div>

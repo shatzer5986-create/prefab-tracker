@@ -695,10 +695,10 @@ export default function JobToolsPage() {
             gap: 16,
           }}
         >
-          <StatCard label="Assigned Tool Records" value={String(assignedTools.length)} />
-          <StatCard label="Assigned Quantity" value={String(totalAssignedQty)} />
-          <StatCard label="Damaged" value={String(damagedCount)} />
-          <StatCard label="Open Tool Requests" value={String(toolRequests.length)} />
+          <StatCard title="Assigned Tool Records" value={String(assignedTools.length)} />
+<StatCard title="Assigned Quantity" value={String(totalAssignedQty)} />
+<StatCard title="Damaged" value={String(damagedCount)} />
+<StatCard title="Open Tool Requests" value={String(toolRequests.length)} />
         </div>
 
         <Section title="Tool Requests">
