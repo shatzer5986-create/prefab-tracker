@@ -3,14 +3,10 @@
 import Link from "next/link";
 import { useParams } from "next/navigation";
 import { useEffect, useMemo, useState } from "react";
-import { inputStyle } from "@/components/InputBlock";
 import Section from "@/components/Section";
 import StatCard from "@/components/StatCard";
-import ToolTable from "@/components/ToolTable";
 import RequestsTable from "@/components/RequestsTable";
-import InventoryRequestPicker from "@/components/InventoryRequestPicker";
-import RequestForm from "@/components/RequestForm";
-import type { RequestFormState } from "@/components/RequestForm";
+
 import type {
   AppData,
   AppNotification,
@@ -22,19 +18,8 @@ import type {
 } from "@/types";
 
 const STORAGE_KEY = "prefab-tracker-v7";
-const LEGACY_TOOLS_KEY = "master-tool-inventory-v1";
-
-function loadStoredAppData(): AppData | null {
-  if (typeof window === "undefined") return null;
-  const raw = localStorage.getItem(STORAGE_KEY);
-  if (!raw) return null;
-
-  try {
-    return JSON.parse(raw) as AppData;
-  } catch {
-    return null;
-  }
-}
+const MASTER_TOOLS_KEY = "master-tool-inventory-v1";
+const SHOP_LOCATIONS = ["Tool Room", "Shop", "Yard", "WH1", "WH2"] as const;
 
 const fallbackData: AppData = {
   jobs: [],
@@ -54,7 +39,40 @@ const fallbackData: AppData = {
   employees: [],
 };
 
-function safeText(value: unknown) {
+type RequestLineDraft = {
+  rowId: number;
+  category: string;
+  inventoryItemId: number | "";
+  quantity: number;
+};
+
+function loadStoredAppData(): AppData | null {
+  if (typeof window === "undefined") return null;
+
+  const raw = localStorage.getItem(STORAGE_KEY);
+  if (!raw) return null;
+
+  try {
+    return JSON.parse(raw) as AppData;
+  } catch {
+    return null;
+  }
+}
+
+function loadStoredTools(): ToolItem[] {
+  if (typeof window === "undefined") return [];
+
+  try {
+    const raw = localStorage.getItem(MASTER_TOOLS_KEY);
+    if (!raw) return [];
+    const parsed = JSON.parse(raw);
+    return Array.isArray(parsed) ? parsed : [];
+  } catch {
+    return [];
+  }
+}
+
+function safeString(value: unknown) {
   return typeof value === "string" ? value.trim() : "";
 }
 
@@ -63,137 +81,68 @@ function safeNumber(value: unknown, fallback = 0) {
   return Number.isFinite(n) ? n : fallback;
 }
 
-function emptyToolRequestForm(jobNumber: string): RequestFormState {
-  return {
-    jobNumber,
-    type: "Tool",
-    requestedBy: "",
-    neededBy: "",
-    itemName: "",
-    description: "",
-    quantity: 1,
-    unit: "ea",
-    notes: "",
-    inventoryItemId: null,
-    inventorySnapshot: "",
-    lines: [],
-  };
+function isShopLocation(value: string) {
+  const normalized = safeString(value).toLowerCase();
+  return SHOP_LOCATIONS.some((loc) => loc.toLowerCase() === normalized);
 }
 
-function normalizeToolRow(raw: any, index: number): ToolItem {
-  const description =
-    safeText(raw.description) ||
-    safeText(raw.toolName) ||
-    safeText(raw.name);
-
-  const normalizedAssignmentType =
-    raw.assignmentType === "Job" ||
-    raw.assignmentType === "Person" ||
-    raw.assignmentType === "Tool Room" ||
-    raw.assignmentType === "Shop" ||
-    raw.assignmentType === "Yard" ||
-    raw.assignmentType === "WH1" ||
-    raw.assignmentType === "WH2"
-      ? raw.assignmentType
-      : raw.jobAssigned
-      ? "Job"
-      : raw.personAssigned
-      ? "Person"
-      : raw.toolRoomLocation || raw.location
-      ? "Tool Room"
-      : "Job";
-
-  const normalizedStatus =
-    raw.status === "Damaged" || raw.status === "Working"
-      ? raw.status
-      : "Working";
-
-  return {
-    id: safeNumber(raw.id, Date.now() + index),
-    category: safeText(raw.category),
-    barcode: safeText(raw.barcode),
-    itemNumber: safeText(raw.itemNumber),
-    manufacturer: safeText(raw.manufacturer),
-    model: safeText(raw.model),
-    description,
-    quantityAvailable: safeNumber(
-      raw.quantityAvailable,
-      safeNumber(raw.qtyAvailable, safeNumber(raw.quantity, safeNumber(raw.qty, 0)))
-    ),
-    jobNumber: safeText(raw.jobNumber) || safeText(raw.jobAssigned) || safeText(raw.job),
-    assignmentType: normalizedAssignmentType,
-    assignedTo: safeText(raw.assignedTo) || safeText(raw.personAssigned),
-    toolRoomLocation: safeText(raw.toolRoomLocation) || safeText(raw.location),
-    serialNumber: safeText(raw.serialNumber),
-    transferDateIn: safeText(raw.transferDateIn) || safeText(raw.dateTransferredIn),
-    transferDateOut: safeText(raw.transferDateOut) || safeText(raw.dateTransferredOut),
-    status: normalizedStatus,
-  };
-}
-
-function loadToolInventory(): ToolItem[] {
-  if (typeof window === "undefined") return [];
-
-  const appData = loadStoredAppData();
-  const appTools = Array.isArray(appData?.toolInventory) ? appData!.toolInventory : [];
-
-  const legacyRaw = localStorage.getItem(LEGACY_TOOLS_KEY);
-  let legacyTools: any[] = [];
-
-  if (legacyRaw) {
-    try {
-      const parsed = JSON.parse(legacyRaw);
-      legacyTools = Array.isArray(parsed) ? parsed : [];
-    } catch {
-      legacyTools = [];
-    }
-  }
-
-  const merged = [...appTools, ...legacyTools];
-  const normalized = merged.map((row, index) => normalizeToolRow(row, index));
-
-  const unique = new Map<number, ToolItem>();
-  for (const row of normalized) unique.set(row.id, row);
-
-  return Array.from(unique.values());
-}
-
-function buildToolLocation(tool: ToolItem) {
-  if (tool.assignmentType === "Tool Room") {
-    return tool.toolRoomLocation ? `Tool Room: ${tool.toolRoomLocation}` : "Tool Room";
-  }
-  if (tool.assignmentType === "Shop") return "Shop";
-  if (tool.assignmentType === "Yard") return "Yard";
-  if (tool.assignmentType === "WH1") return "WH1";
-  if (tool.assignmentType === "WH2") return "WH2";
-  if (tool.assignmentType === "Person") {
-    return tool.assignedTo ? `Assigned to ${tool.assignedTo}` : "Assigned to person";
-  }
-  if (tool.assignmentType === "Job") {
-    return tool.jobNumber ? `Assigned to job ${tool.jobNumber}` : "Assigned to job";
-  }
-  return "-";
-}
-
-function buildToolTitle(tool: ToolItem) {
+function buildToolTitle(item: ToolItem) {
   return (
-    safeText(tool.description) ||
-    [safeText(tool.manufacturer), safeText(tool.model)].filter(Boolean).join(" ") ||
-    safeText(tool.itemNumber) ||
-    safeText(tool.barcode) ||
-    "Tool"
+    [
+      safeString(item.description),
+      safeString(item.itemNumber),
+      safeString(item.manufacturer),
+      safeString(item.model),
+    ]
+      .filter(Boolean)
+      .join(" • ") || "Tool"
   );
 }
 
-function buildToolSubtitle(tool: ToolItem) {
+function buildToolSubtitle(item: ToolItem) {
   return [
-    safeText(tool.category),
-    safeText(tool.itemNumber) ? `Item #: ${safeText(tool.itemNumber)}` : "",
-    safeText(tool.barcode) ? `Barcode: ${safeText(tool.barcode)}` : "",
-    safeText(tool.serialNumber) ? `Serial: ${safeText(tool.serialNumber)}` : "",
+    safeString(item.category),
+    safeString(item.barcode) ? `Barcode: ${safeString(item.barcode)}` : "",
+    safeString(item.serialNumber) ? `Serial: ${safeString(item.serialNumber)}` : "",
+    safeString(item.status) ? `Status: ${safeString(item.status)}` : "",
   ]
     .filter(Boolean)
     .join(" • ");
+}
+
+function buildToolLocation(item: ToolItem) {
+  if (item.assignmentType === "Person") {
+    return item.assignedTo ? `Assigned to ${item.assignedTo}` : "Assigned to person";
+  }
+
+  if (item.assignmentType === "Job") {
+    return item.jobNumber ? `Assigned to job ${item.jobNumber}` : "Assigned to job";
+  }
+
+  if (
+    item.assignmentType === "Tool Room" ||
+    item.assignmentType === "Shop" ||
+    item.assignmentType === "Yard" ||
+    item.assignmentType === "WH1" ||
+    item.assignmentType === "WH2"
+  ) {
+    return item.toolRoomLocation || item.assignmentType;
+  }
+
+  return "Unassigned";
+}
+
+function getAvailableQty(item: ToolItem) {
+  return Math.max(safeNumber(item.quantityAvailable, 0), 0);
+}
+
+function createEmptyRequestLine(): RequestLineDraft {
+  return {
+    rowId: Date.now() + Math.floor(Math.random() * 100000),
+    category: "",
+    inventoryItemId: "",
+    quantity: 1,
+  };
 }
 
 export default function JobToolsPage() {
@@ -209,12 +158,15 @@ export default function JobToolsPage() {
   const [showRequestForm, setShowRequestForm] = useState(false);
   const [showPickupForm, setShowPickupForm] = useState(false);
 
-  const [inventorySearch, setInventorySearch] = useState("");
-  const [toolRequestForm, setToolRequestForm] = useState<RequestFormState>(() =>
-  emptyToolRequestForm(jobNumber)
-);
+  const [requestLines, setRequestLines] = useState<RequestLineDraft[]>([createEmptyRequestLine()]);
+  const [requestRequestedBy, setRequestRequestedBy] = useState("");
+  const [requestNeededBy, setRequestNeededBy] = useState("");
+  const [requestNotes, setRequestNotes] = useState("");
 
-  const [selectedToolIds, setSelectedToolIds] = useState<number[]>([]);
+  const [selectedAssignedToolIds, setSelectedAssignedToolIds] = useState<number[]>([]);
+  const [selectedAssignedToolQtys, setSelectedAssignedToolQtys] = useState<Record<number, number>>(
+    {}
+  );
   const [pickupRequestedBy, setPickupRequestedBy] = useState("");
   const [pickupNeededBy, setPickupNeededBy] = useState("");
   const [pickupToLocation, setPickupToLocation] = useState("Shop");
@@ -222,25 +174,56 @@ export default function JobToolsPage() {
 
   function refreshFromStorage() {
     const parsed = loadStoredAppData();
-    setToolInventory(loadToolInventory());
-    setRequests(parsed?.requests || fallbackData.requests || []);
-    setNotifications(parsed?.notifications || fallbackData.notifications || []);
-    setJobs(parsed?.jobs || fallbackData.jobs || []);
-    setEmployees(parsed?.employees || fallbackData.employees || []);
+
+    setToolInventory(loadStoredTools());
+    setRequests(parsed?.requests || fallbackData.requests);
+    setNotifications(parsed?.notifications || fallbackData.notifications);
+    setJobs(parsed?.jobs || fallbackData.jobs);
+    setEmployees(parsed?.employees || fallbackData.employees);
   }
 
-  useEffect(() => {
-    setToolRequestForm(emptyToolRequestForm(jobNumber));
-    setInventorySearch("");
-    setSelectedToolIds([]);
+  function persistRequestsAndNotifications(
+    nextRequests: JobRequest[],
+    nextNotifications: AppNotification[]
+  ) {
+    const latest = loadStoredAppData() || fallbackData;
+
+    const updatedData: AppData = {
+      ...latest,
+      requests: nextRequests,
+      notifications: nextNotifications,
+      toolInventory: latest.toolInventory || [],
+    };
+
+    localStorage.setItem(STORAGE_KEY, JSON.stringify(updatedData));
+
+    setRequests(nextRequests);
+    setNotifications(nextNotifications);
+  }
+
+  function resetRequestForm() {
+    setRequestLines([createEmptyRequestLine()]);
+    setRequestRequestedBy("");
+    setRequestNeededBy("");
+    setRequestNotes("");
+  }
+
+  function resetPickupForm() {
+    setSelectedAssignedToolIds([]);
+    setSelectedAssignedToolQtys({});
     setPickupRequestedBy("");
     setPickupNeededBy("");
     setPickupToLocation("Shop");
     setPickupNotes("");
+  }
+
+  useEffect(() => {
+    resetRequestForm();
+    resetPickupForm();
   }, [jobNumber]);
 
   useEffect(() => {
-    async function loadJobsFromApi() {
+    async function loadJobs() {
       try {
         const response = await fetch("/api/jobs", { cache: "no-store" });
         if (!response.ok) throw new Error("Failed to load jobs");
@@ -253,7 +236,7 @@ export default function JobToolsPage() {
       }
     }
 
-    loadJobsFromApi();
+    loadJobs();
     refreshFromStorage();
 
     const handleFocus = () => refreshFromStorage();
@@ -268,37 +251,9 @@ export default function JobToolsPage() {
     };
   }, [jobNumber]);
 
-  useEffect(() => {
-    const latest = loadStoredAppData() || fallbackData;
-    const dataToSave: AppData = {
-      ...latest,
-      jobs: latest.jobs?.length ? latest.jobs : jobs,
-      employees: latest.employees?.length ? latest.employees : employees,
-      toolInventory,
-      requests,
-      notifications,
-    };
-    localStorage.setItem(STORAGE_KEY, JSON.stringify(dataToSave));
-  }, [jobs, employees, toolInventory, requests, notifications]);
-
   const currentJob = useMemo(
-    () => jobs.find((job) => job.jobNumber === jobNumber) || null,
+    () => jobs.find((job) => safeString(job.jobNumber) === safeString(jobNumber)) || null,
     [jobs, jobNumber]
-  );
-
-  const filteredTools = useMemo(
-    () => toolInventory.filter((item) => item.jobNumber === jobNumber),
-    [toolInventory, jobNumber]
-  );
-
-  const toolRequests = useMemo(
-    () =>
-      requests.filter(
-        (item) =>
-          item.jobNumber === jobNumber &&
-          (item.lines || []).some((line) => line.type === "Tool")
-      ),
-    [requests, jobNumber]
   );
 
   const employeeOptions = useMemo(() => {
@@ -308,186 +263,358 @@ export default function JobToolsPage() {
       .map((employee) => employee.name);
   }, [employees]);
 
-  const toolPickerItems = useMemo(() => {
-    return toolInventory.map((tool) => {
-      const title = buildToolTitle(tool);
-      const subtitle = buildToolSubtitle(tool);
-      const location = buildToolLocation(tool);
-
-      return {
-        id: tool.id,
-        title,
-        subtitle,
-        meta: location,
-        status: safeText(tool.status),
-        qtyAvailable: Number(tool.quantityAvailable || 0),
-        searchText: [
-          title,
-          subtitle,
-          location,
-          safeText(tool.description),
-          safeText(tool.category),
-          safeText(tool.itemNumber),
-          safeText(tool.barcode),
-          safeText(tool.manufacturer),
-          safeText(tool.model),
-          safeText(tool.serialNumber),
-          safeText(tool.jobNumber),
-          safeText(tool.assignedTo),
-          safeText(tool.toolRoomLocation),
-        ]
-          .filter(Boolean)
-          .join(" "),
-      };
-    });
-  }, [toolInventory]);
-
-  const totalQty = useMemo(
-    () => filteredTools.reduce((sum, row) => sum + Number(row.quantityAvailable || 0), 0),
-    [filteredTools]
-  );
-
-  const serializedCount = useMemo(
-    () => filteredTools.filter((row) => safeText(row.serialNumber) !== "").length,
-    [filteredTools]
-  );
-
-  const assignedToPersonCount = useMemo(
-    () => filteredTools.filter((row) => row.assignmentType === "Person").length,
-    [filteredTools]
-  );
-
-  const inToolRoomCount = useMemo(
+  const assignedTools = useMemo(
     () =>
-      filteredTools.filter(
-        (row) =>
-          row.assignmentType === "Tool Room" ||
-          row.assignmentType === "Shop" ||
-          row.assignmentType === "Yard" ||
-          row.assignmentType === "WH1" ||
-          row.assignmentType === "WH2"
-      ).length,
-    [filteredTools]
+      toolInventory.filter(
+        (item) =>
+          safeString(item.assignmentType) === "Job" &&
+          safeString(item.jobNumber) === safeString(jobNumber)
+      ),
+    [toolInventory, jobNumber]
+  );
+
+  const availableTools = useMemo(
+    () =>
+      [...toolInventory]
+        .filter((item) => {
+          if (safeString(item.status) !== "Working") return false;
+          const qty = getAvailableQty(item);
+          if (qty < 1) return false;
+
+          const location =
+            safeString(item.toolRoomLocation) ||
+            safeString(item.assignmentType) ||
+            safeString(item.jobNumber);
+
+          return (
+            isShopLocation(location) ||
+            item.assignmentType === "Tool Room" ||
+            item.assignmentType === "Shop" ||
+            item.assignmentType === "Yard" ||
+            item.assignmentType === "WH1" ||
+            item.assignmentType === "WH2"
+          );
+        })
+        .sort((a, b) => {
+          const categoryCompare = safeString(a.category).localeCompare(safeString(b.category));
+          if (categoryCompare !== 0) return categoryCompare;
+          return buildToolTitle(a).localeCompare(buildToolTitle(b));
+        }),
+    [toolInventory]
+  );
+
+ const requestCategories = useMemo(() => {
+  return Array.from(
+    new Set(
+      toolInventory
+        .map((item) => safeString(item.category))
+        .filter(Boolean)
+    )
+  ).sort((a, b) => a.localeCompare(b));
+}, [toolInventory]);
+
+  const availableToolsByCategory = useMemo(() => {
+    const map = new Map<string, ToolItem[]>();
+
+    for (const item of availableTools) {
+      const category = safeString(item.category) || "Uncategorized";
+      const existing = map.get(category) || [];
+      existing.push(item);
+      map.set(category, existing);
+    }
+
+    for (const [key, value] of map.entries()) {
+      value.sort((a, b) => buildToolTitle(a).localeCompare(buildToolTitle(b)));
+      map.set(key, value);
+    }
+
+    return map;
+  }, [availableTools]);
+
+  const toolRequests = useMemo(
+    () =>
+      requests.filter(
+        (item) =>
+          safeString(item.jobNumber) === safeString(jobNumber) &&
+          (item.lines || []).some((line) => line.type === "Tool")
+      ),
+    [requests, jobNumber]
+  );
+
+  const totalAssignedQty = useMemo(
+    () => assignedTools.reduce((sum, row) => sum + safeNumber(row.quantityAvailable, 0), 0),
+    [assignedTools]
   );
 
   const damagedCount = useMemo(
-    () => filteredTools.filter((row) => row.status === "Damaged").length,
-    [filteredTools]
+    () => assignedTools.filter((row) => safeString(row.status) === "Damaged").length,
+    [assignedTools]
   );
 
-  function toggleSelectedTool(id: number) {
-    setSelectedToolIds((prev) =>
-      prev.includes(id) ? prev.filter((value) => value !== id) : [...prev, id]
+  function addRequestLine() {
+    setRequestLines((prev) => [...prev, createEmptyRequestLine()]);
+  }
+
+  function removeRequestLine(rowId: number) {
+    setRequestLines((prev) => {
+      if (prev.length <= 1) return prev;
+      return prev.filter((line) => line.rowId !== rowId);
+    });
+  }
+
+  function updateRequestLine(
+    rowId: number,
+    patch: Partial<RequestLineDraft>,
+    options?: { resetTool?: boolean }
+  ) {
+    setRequestLines((prev) =>
+      prev.map((line) => {
+        if (line.rowId !== rowId) return line;
+
+        const next: RequestLineDraft = {
+          ...line,
+          ...patch,
+        };
+
+        if (options?.resetTool) {
+          next.inventoryItemId = "";
+          next.quantity = 1;
+        }
+
+        return next;
+      })
     );
   }
 
-  function toggleAllToolsForPickup() {
-    const allIds = filteredTools.map((tool) => tool.id);
+  function getLineToolOptions(line: RequestLineDraft) {
+  const category = safeString(line.category);
+  if (!category) return [];
 
-    setSelectedToolIds((prev) =>
-      prev.length === allIds.length ? [] : allIds
-    );
+  return toolInventory
+    .filter((item) => safeString(item.category) === category)
+    .sort((a, b) => buildToolTitle(a).localeCompare(buildToolTitle(b)));
+}
+
+ function createToolRequest() {
+  if (!safeString(requestRequestedBy)) {
+    alert("Select Requested By.");
+    return;
   }
 
-  function addSubmittedNotification(request: JobRequest, title = "Request submitted") {
-    const newNotification: AppNotification = {
-      id: Date.now() + Math.floor(Math.random() * 1000),
-      jobNumber: request.jobNumber,
-      requestId: request.id,
-      type: "Request Submitted",
-      title,
-      message:
-        (request.lines || []).map((line) => line.itemName).join(", ") ||
-        "Items requested.",
-      createdAt: new Date().toISOString(),
-      isRead: false,
-    };
+  const cleanedLines = requestLines.filter(
+    (line) => safeString(line.category) || line.inventoryItemId !== ""
+  );
 
-    setNotifications((prev) => [newNotification, ...prev]);
+  if (!cleanedLines.length) {
+    alert("Add at least one request line.");
+    return;
   }
 
-  function saveToolRequest() {
-    const hasMinimumData =
-      toolRequestForm.itemName.trim() ||
-      toolRequestForm.description.trim() ||
-      toolRequestForm.notes.trim();
-
-    if (!hasMinimumData) return;
-
-    const line: JobRequestLine = {
-      id: Date.now() + 1,
-      type: "Tool",
-      category: "",
-      itemName: toolRequestForm.itemName.trim(),
-      description: toolRequestForm.description.trim(),
-      quantity: Number(toolRequestForm.quantity) || 0,
-      unit: toolRequestForm.unit.trim() || "ea",
-      inventoryItemId: toolRequestForm.inventoryItemId ?? null,
-      inventorySnapshot: toolRequestForm.inventorySnapshot ?? "",
-    };
-
-    const newRequest: JobRequest = {
-      id: Date.now(),
-      destinationType: "Job",
-      requestFlow: "To Job",
-      jobNumber,
-      requestedForPerson: "",
-      requestedBy: toolRequestForm.requestedBy.trim(),
-      requestDate: new Date().toISOString().slice(0, 10),
-      neededBy: toolRequestForm.neededBy,
-      status: "Open",
-      notes: toolRequestForm.notes.trim(),
-      fromLocation: "Shop",
-      toLocation: jobNumber,
-      lines: [line],
-      workflowStatus: "Request Submitted",
-      pickTicketId: null,
-      pickTicketNumber: "",
-      transferTicketId: null,
-      transferTicketNumber: "",
-      deliveredToSiteAt: "",
-      assignedToJobAt: "",
-    };
-
-    setRequests((prev) => [newRequest, ...prev]);
-    addSubmittedNotification(newRequest, "Tool request submitted");
-    setToolRequestForm(emptyToolRequestForm(jobNumber));
-    setInventorySearch("");
-    setShowRequestForm(false);
+  const missingCategory = cleanedLines.find((line) => !safeString(line.category));
+  if (missingCategory) {
+    alert("Each request line needs a category.");
+    return;
   }
 
-  function createPickupRequest() {
-    if (!selectedToolIds.length) {
-      alert("Select at least one tool.");
+  const missingTool = cleanedLines.find((line) => line.inventoryItemId === "");
+  if (missingTool) {
+    alert("Each request line needs a tool name.");
+    return;
+  }
+
+  const validatedSelections: Array<{
+    line: RequestLineDraft;
+    item: ToolItem;
+    qty: number;
+  }> = [];
+
+  const duplicateCheck = new Set<number>();
+
+  for (const line of cleanedLines) {
+    const selectedId = Number(line.inventoryItemId);
+    const item = toolInventory.find((tool) => Number(tool.id) === selectedId);
+
+    if (!item) {
+      alert("One of the selected tools is no longer available. Please reselect it.");
       return;
     }
 
-    if (!safeText(pickupRequestedBy)) {
+    if (duplicateCheck.has(selectedId)) {
+      alert("The same tool is selected more than once. Use one line per tool.");
+      return;
+    }
+
+    duplicateCheck.add(selectedId);
+
+    const qty = Math.max(1, Number(line.quantity) || 1);
+
+    validatedSelections.push({
+      line,
+      item,
+      qty,
+    });
+  }
+
+  const lines: JobRequestLine[] = validatedSelections.map(({ item, qty }, index) => ({
+    id: Date.now() + index + 1,
+    type: "Tool",
+    category: safeString(item.category),
+    itemName: buildToolTitle(item),
+    description: [buildToolSubtitle(item), buildToolLocation(item)]
+      .filter(Boolean)
+      .join(" | "),
+    quantity: qty,
+    unit: "ea",
+    inventoryItemId: item.id,
+    inventorySnapshot: JSON.stringify(item),
+  }));
+
+  const newRequest: JobRequest = {
+    id: Date.now(),
+    destinationType: "Job",
+    requestFlow: "To Job",
+    jobNumber,
+    requestedForPerson: "",
+    requestedBy: safeString(requestRequestedBy),
+    requestDate: new Date().toISOString().slice(0, 10),
+    neededBy: requestNeededBy,
+    status: "Open",
+    notes: safeString(requestNotes),
+    fromLocation: "Shop",
+    toLocation: jobNumber,
+    lines,
+    workflowStatus: "Request Submitted",
+    pickTicketId: null,
+    pickTicketNumber: "",
+    transferTicketId: null,
+    transferTicketNumber: "",
+    deliveredToSiteAt: "",
+    assignedToJobAt: "",
+  };
+
+  const latest = loadStoredAppData() || fallbackData;
+  const nextRequests = [newRequest, ...(latest.requests || [])];
+
+  const newNotification: AppNotification = {
+    id: Date.now() + Math.floor(Math.random() * 1000),
+    jobNumber: newRequest.jobNumber,
+    requestId: newRequest.id,
+    type: "Request Submitted",
+    title: "Tool request submitted",
+    message:
+      (newRequest.lines || [])
+        .map(
+          (line) => `${line.itemName} (${line.quantity}${line.unit ? ` ${line.unit}` : ""})`
+        )
+        .join(", ") || "Items requested.",
+    createdAt: new Date().toISOString(),
+    isRead: false,
+  };
+
+  const nextNotifications = [newNotification, ...(latest.notifications || [])];
+  persistRequestsAndNotifications(nextRequests, nextNotifications);
+
+  resetRequestForm();
+  setShowRequestForm(false);
+}
+
+  function toggleSelectedAssignedTool(id: number) {
+    setSelectedAssignedToolIds((prev) => {
+      if (prev.includes(id)) {
+        const next = prev.filter((value) => value !== id);
+        setSelectedAssignedToolQtys((current) => {
+          const updated = { ...current };
+          delete updated[id];
+          return updated;
+        });
+        return next;
+      }
+
+      const selectedItem = assignedTools.find((item) => item.id === id);
+      const defaultQty = Math.max(Math.min(getAvailableQty(selectedItem as ToolItem), 1), 1);
+
+      setSelectedAssignedToolQtys((current) => ({
+        ...current,
+        [id]: defaultQty,
+      }));
+
+      return [...prev, id];
+    });
+  }
+
+  function updateSelectedAssignedToolQty(id: number, qty: number) {
+    setSelectedAssignedToolQtys((prev) => ({
+      ...prev,
+      [id]: Math.max(1, qty || 1),
+    }));
+  }
+
+  function toggleAllAssignedTools() {
+    const allIds = assignedTools.map((item) => item.id);
+
+    setSelectedAssignedToolIds((prev) => {
+      if (prev.length === allIds.length) {
+        setSelectedAssignedToolQtys({});
+        return [];
+      }
+
+      const qtyMap: Record<number, number> = {};
+      for (const item of assignedTools) {
+        qtyMap[item.id] = Math.max(Math.min(getAvailableQty(item), 1), 1);
+      }
+
+      setSelectedAssignedToolQtys(qtyMap);
+      return allIds;
+    });
+  }
+
+  function createPickupRequest() {
+    if (!selectedAssignedToolIds.length) {
+      alert("Select at least one assigned tool.");
+      return;
+    }
+
+    if (!safeString(pickupRequestedBy)) {
       alert("Select Requested By.");
       return;
     }
 
-    const selectedTools = filteredTools.filter((tool) =>
-      selectedToolIds.includes(tool.id)
+    const selectedItems = assignedTools.filter((item) =>
+      selectedAssignedToolIds.includes(item.id)
     );
 
-    if (!selectedTools.length) {
-      alert("No selected tools found.");
+    if (!selectedItems.length) {
+      alert("No selected assigned tools found.");
       return;
     }
 
-    const lines: JobRequestLine[] = selectedTools.map((tool, index) => ({
+    const invalidQtyItem = selectedItems.find((item) => {
+      const requestedQty = safeNumber(selectedAssignedToolQtys[item.id], 1);
+      const maxQty = getAvailableQty(item);
+      return requestedQty < 1 || requestedQty > maxQty;
+    });
+
+    if (invalidQtyItem) {
+      alert(
+        `Requested quantity for ${buildToolTitle(invalidQtyItem)} must be between 1 and ${getAvailableQty(
+          invalidQtyItem
+        )}.`
+      );
+      return;
+    }
+
+    const lines: JobRequestLine[] = selectedItems.map((item, index) => ({
       id: Date.now() + index + 1,
       type: "Tool",
-      category: safeText(tool.category),
-      itemName: buildToolTitle(tool),
-      description: [buildToolSubtitle(tool), buildToolLocation(tool)]
+      category: safeString(item.category),
+      itemName: buildToolTitle(item),
+      description: [buildToolSubtitle(item), buildToolLocation(item)]
         .filter(Boolean)
         .join(" | "),
-      quantity: Number(tool.quantityAvailable) || 1,
+      quantity: safeNumber(selectedAssignedToolQtys[item.id], 1),
       unit: "ea",
-      inventoryItemId: tool.id,
-      inventorySnapshot: JSON.stringify(tool),
+      inventoryItemId: item.id,
+      inventorySnapshot: JSON.stringify(item),
     }));
 
     const newRequest: JobRequest = {
@@ -496,13 +623,13 @@ export default function JobToolsPage() {
       requestFlow: "From Job",
       jobNumber,
       requestedForPerson: "",
-      requestedBy: safeText(pickupRequestedBy),
+      requestedBy: safeString(pickupRequestedBy),
       requestDate: new Date().toISOString().slice(0, 10),
       neededBy: pickupNeededBy,
       status: "Open",
-      notes: safeText(pickupNotes),
+      notes: safeString(pickupNotes),
       fromLocation: jobNumber,
-      toLocation: safeText(pickupToLocation) || "Shop",
+      toLocation: safeString(pickupToLocation) || "Shop",
       lines,
       workflowStatus: "Request Submitted",
       pickTicketId: null,
@@ -513,32 +640,51 @@ export default function JobToolsPage() {
       assignedToJobAt: "",
     };
 
-    setRequests((prev) => [newRequest, ...prev]);
-    addSubmittedNotification(newRequest, "Pickup request submitted");
+    const latest = loadStoredAppData() || fallbackData;
+    const nextRequests = [newRequest, ...(latest.requests || [])];
 
-    setSelectedToolIds([]);
-    setPickupRequestedBy("");
-    setPickupNeededBy("");
-    setPickupToLocation("Shop");
-    setPickupNotes("");
+    const newNotification: AppNotification = {
+      id: Date.now() + Math.floor(Math.random() * 1000),
+      jobNumber: newRequest.jobNumber,
+      requestId: newRequest.id,
+      type: "Request Submitted",
+      title: "Tool pickup request submitted",
+      message:
+        (newRequest.lines || [])
+          .map(
+            (line) => `${line.itemName} (${line.quantity}${line.unit ? ` ${line.unit}` : ""})`
+          )
+          .join(", ") || "Items requested.",
+      createdAt: new Date().toISOString(),
+      isRead: false,
+    };
+
+    const nextNotifications = [newNotification, ...(latest.notifications || [])];
+    persistRequestsAndNotifications(nextRequests, nextNotifications);
+
+    resetPickupForm();
     setShowPickupForm(false);
   }
 
   return (
-    <main style={pageStyle}>
+    <div style={pageStyle}>
       <div style={containerStyle}>
         <div style={heroStyle}>
-          <div>
-            <Link href={`/jobs/${encodeURIComponent(jobNumber)}`} style={backLinkStyle}>
-              ← Back to Job Dashboard
-            </Link>
+          <Link href="/jobs" style={backLinkStyle}>
+            ← Back to Jobs
+          </Link>
 
-            <h1 style={heroTitleStyle}>Tools</h1>
+          <div style={{ display: "grid", gap: 14 }}>
+            <div>
+              <h1 style={heroTitleStyle}>Job Tools</h1>
+              <p style={heroSubtitleStyle}>
+                {currentJob
+                  ? `${currentJob.jobNumber} • ${currentJob.name || "Unnamed Job"}`
+                  : jobNumber}
+              </p>
+            </div>
 
-            <p style={heroSubtitleStyle}>
-              {jobNumber}
-              {currentJob?.name ? ` • ${currentJob.name}` : ""}
-            </p>
+            <JobNavTabs jobNumber={jobNumber} active="tools" />
           </div>
         </div>
 
@@ -549,37 +695,36 @@ export default function JobToolsPage() {
             gap: 16,
           }}
         >
-          <StatCard title="Tool Rows" value={String(filteredTools.length)} />
-          <StatCard title="Master Tool List Rows" value={String(toolInventory.length)} />
-          <StatCard title="Total Qty" value={String(totalQty)} />
-          <StatCard title="Serialized" value={String(serializedCount)} />
-          <StatCard title="Assigned to Person" value={String(assignedToPersonCount)} />
-          <StatCard title="Stored / Yard / WH" value={String(inToolRoomCount)} />
-          <StatCard title="Damaged" value={String(damagedCount)} />
+          <StatCard label="Assigned Tool Records" value={String(assignedTools.length)} />
+          <StatCard label="Assigned Quantity" value={String(totalAssignedQty)} />
+          <StatCard label="Damaged" value={String(damagedCount)} />
+          <StatCard label="Open Tool Requests" value={String(toolRequests.length)} />
         </div>
 
-        <div style={{ marginTop: 4 }}>
-          <JobNavTabs jobNumber={jobNumber} active="tools" />
-        </div>
-
-        <Section title="Tool Requests" collapsible defaultOpen>
+        <Section title="Tool Requests">
           <div style={{ display: "grid", gap: 16 }}>
-            <div style={{ display: "flex", gap: 10, flexWrap: "wrap" }}>
+            <div style={{ display: "flex", gap: 12, flexWrap: "wrap" }}>
               <button
                 type="button"
-                onClick={() => setShowRequestForm((prev) => !prev)}
+                onClick={() => {
+                  setShowRequestForm((prev) => !prev);
+                  if (showPickupForm) setShowPickupForm(false);
+                }}
                 style={{
                   ...requestButtonStyle,
                   background: showRequestForm ? "#ea580c" : "#c2410c",
                   border: "1px solid #ea580c",
                 }}
               >
-                {showRequestForm ? "Close Request Form" : "Request Tool"}
+                {showRequestForm ? "Close Request Form" : "Request Tools"}
               </button>
 
               <button
                 type="button"
-                onClick={() => setShowPickupForm((prev) => !prev)}
+                onClick={() => {
+                  setShowPickupForm((prev) => !prev);
+                  if (showRequestForm) setShowRequestForm(false);
+                }}
                 style={{
                   ...requestButtonStyle,
                   background: showPickupForm ? "#15803d" : "#166534",
@@ -593,52 +738,198 @@ export default function JobToolsPage() {
             {showRequestForm ? (
               <div style={panelCardStyle}>
                 <div style={{ fontSize: 18, fontWeight: 700, color: "#f5f5f5" }}>
-                  Tool Request
+                  Request Tools from Shop
                 </div>
 
                 <div style={{ fontSize: 13, color: "#d1d5db" }}>
-                  Search matches description, item #, barcode, manufacturer, model, serial, assignment, and location.
+                  Pick a category first, then choose the tool name from that category. Each line becomes one request line.
                 </div>
 
-                <InventoryRequestPicker
-                  label="Pick From Master Tool List"
-                  searchValue={inventorySearch}
-                  onSearchChange={setInventorySearch}
-                  items={toolPickerItems}
-                  onSelect={(picked) => {
-                    setInventorySearch(picked.title);
-
-                    const selectedTool = toolInventory.find((t) => t.id === picked.id);
-
-                    setToolRequestForm((prev) => ({
-                      ...prev,
-                      itemName: picked.title,
-                      description: [picked.subtitle, picked.meta].filter(Boolean).join(" | "),
-                      quantity: 1,
-                      unit: "ea",
-                      notes: `Inventory status: ${picked.status || "-"} | Qty available: ${
-                        picked.qtyAvailable ?? 0
-                      }${picked.meta ? ` | ${picked.meta}` : ""}`,
-                      inventoryItemId: picked.id,
-                      inventorySnapshot: selectedTool ? JSON.stringify(selectedTool) : "",
-                    }));
+                <div
+                  style={{
+                    display: "grid",
+                    gridTemplateColumns: "repeat(auto-fit, minmax(220px, 1fr))",
+                    gap: 12,
                   }}
-                  emptyMessage="No matching tools found in the master tool list."
-                />
+                >
+                  <Field label="Requested By">
+                    <select
+                      value={requestRequestedBy}
+                      onChange={(e) => setRequestRequestedBy(e.target.value)}
+                      style={fieldInputStyle}
+                    >
+                      <option value="">Select employee</option>
+                      {employeeOptions.map((employee) => (
+                        <option key={employee} value={employee}>
+                          {employee}
+                        </option>
+                      ))}
+                    </select>
+                  </Field>
 
-                <RequestForm
-                  title="Selected Tool Request Details"
-                  requestType="Tool"
-                  form={toolRequestForm}
-                  setForm={setToolRequestForm}
-                  onSave={saveToolRequest}
-                  onCancel={() => {
-                    setToolRequestForm(emptyToolRequestForm(jobNumber));
-                    setInventorySearch("");
-                    setShowRequestForm(false);
-                  }}
-                  hideType
-                />
+                  <Field label="Needed By">
+                    <input
+                      type="date"
+                      value={requestNeededBy}
+                      onChange={(e) => setRequestNeededBy(e.target.value)}
+                      style={fieldInputStyle}
+                    />
+                  </Field>
+
+                  <Field label="Notes">
+                    <input
+                      value={requestNotes}
+                      onChange={(e) => setRequestNotes(e.target.value)}
+                      style={fieldInputStyle}
+                    />
+                  </Field>
+                </div>
+
+                <div style={{ display: "grid", gap: 12 }}>
+                  {requestLines.map((line, index) => {
+                    const toolOptions = getLineToolOptions(line);
+                    const selectedTool =
+                      line.inventoryItemId === ""
+                        ? null
+                        : availableTools.find((tool) => tool.id === line.inventoryItemId) || null;
+                    const maxQty = selectedTool ? Math.max(getAvailableQty(selectedTool), 1) : 1;
+
+                    return (
+                      <div key={line.rowId} style={lineCardStyle}>
+                        <div
+                          style={{
+                            display: "flex",
+                            justifyContent: "space-between",
+                            alignItems: "center",
+                            gap: 12,
+                            flexWrap: "wrap",
+                          }}
+                        >
+                          <div style={{ fontSize: 15, fontWeight: 700, color: "#f5f5f5" }}>
+                            Request Line {index + 1}
+                          </div>
+
+                          <button
+                            type="button"
+                            onClick={() => removeRequestLine(line.rowId)}
+                            disabled={requestLines.length === 1}
+                            style={{
+                              ...smallButtonStyle,
+                              opacity: requestLines.length === 1 ? 0.5 : 1,
+                              cursor: requestLines.length === 1 ? "not-allowed" : "pointer",
+                            }}
+                          >
+                            Remove Line
+                          </button>
+                        </div>
+
+                        <div
+                          style={{
+                            display: "grid",
+                            gridTemplateColumns: "minmax(180px, 1fr) minmax(260px, 2fr) 120px",
+                            gap: 12,
+                          }}
+                        >
+                          <Field label="Category">
+                            <select
+                              value={line.category}
+                              onChange={(e) =>
+                                updateRequestLine(
+                                  line.rowId,
+                                  { category: e.target.value },
+                                  { resetTool: true }
+                                )
+                              }
+                              style={fieldInputStyle}
+                            >
+                              <option value="">Select category</option>
+                             {requestCategories.map((category) => (
+                                <option key={category} value={category}>
+                                  {category}
+                                </option>
+                              ))}
+                            </select>
+                          </Field>
+
+                          <Field label="Tool Name">
+  <select
+    value={line.inventoryItemId}
+    onChange={(e) =>
+      updateRequestLine(line.rowId, {
+        inventoryItemId: e.target.value ? Number(e.target.value) : "",
+        quantity: 1,
+      })
+    }
+    style={fieldInputStyle}
+    disabled={!line.category}
+  >
+    <option value="">
+      {line.category ? "Select tool" : "Select category first"}
+    </option>
+    {toolOptions.map((item) => (
+      <option key={item.id} value={item.id}>
+        {[
+          buildToolTitle(item),
+          safeString(item.status),
+          safeString(item.toolRoomLocation) || safeString(item.assignmentType),
+        ]
+          .filter(Boolean)
+          .join(" • ")}
+      </option>
+    ))}
+  </select>
+</Field>
+
+                          <Field label="Qty">
+                            <input
+                              type="number"
+                              min={1}
+                              max={maxQty}
+                              value={line.quantity}
+                              onChange={(e) =>
+                                updateRequestLine(line.rowId, {
+                                  quantity: Math.min(
+                                    Math.max(Number(e.target.value) || 1, 1),
+                                    maxQty
+                                  ),
+                                })
+                              }
+                              style={fieldInputStyle}
+                              disabled={!selectedTool}
+                            />
+                          </Field>
+                        </div>
+
+                        {selectedTool ? (
+                          <div style={lineMetaStyle}>
+                            <div>{buildToolSubtitle(selectedTool)}</div>
+                            <div>
+                              Qty Available: {getAvailableQty(selectedTool)} • {buildToolLocation(selectedTool)}
+                            </div>
+                          </div>
+                        ) : null}
+                      </div>
+                    );
+                  })}
+                </div>
+
+                <div style={{ display: "flex", gap: 10, flexWrap: "wrap" }}>
+                  <button type="button" onClick={addRequestLine} style={secondaryButtonStyle}>
+                    Add Request Line
+                  </button>
+
+                  <button
+                    type="button"
+                    onClick={createToolRequest}
+                    style={{
+                      ...requestButtonStyle,
+                      background: "#c2410c",
+                      border: "1px solid #ea580c",
+                    }}
+                  >
+                    Send Tool Request
+                  </button>
+                </div>
               </div>
             ) : null}
 
@@ -649,7 +940,7 @@ export default function JobToolsPage() {
                 </div>
 
                 <div style={{ fontSize: 13, color: "#d1d5db" }}>
-                  Select one or more tools assigned to this job, then send a pickup request to the shop.
+                  Select one or more tools assigned to this job, set the quantity for each, then send a pickup request.
                 </div>
 
                 <div
@@ -663,7 +954,7 @@ export default function JobToolsPage() {
                     <select
                       value={pickupRequestedBy}
                       onChange={(e) => setPickupRequestedBy(e.target.value)}
-                      style={inputStyle}
+                      style={fieldInputStyle}
                     >
                       <option value="">Select employee</option>
                       {employeeOptions.map((employee) => (
@@ -679,7 +970,7 @@ export default function JobToolsPage() {
                       type="date"
                       value={pickupNeededBy}
                       onChange={(e) => setPickupNeededBy(e.target.value)}
-                      style={inputStyle}
+                      style={fieldInputStyle}
                     />
                   </Field>
 
@@ -687,7 +978,7 @@ export default function JobToolsPage() {
                     <select
                       value={pickupToLocation}
                       onChange={(e) => setPickupToLocation(e.target.value)}
-                      style={inputStyle}
+                      style={fieldInputStyle}
                     >
                       <option value="Shop">Shop</option>
                       <option value="Tool Room">Tool Room</option>
@@ -701,7 +992,7 @@ export default function JobToolsPage() {
                     <input
                       value={pickupNotes}
                       onChange={(e) => setPickupNotes(e.target.value)}
-                      style={inputStyle}
+                      style={fieldInputStyle}
                     />
                   </Field>
                 </div>
@@ -709,10 +1000,10 @@ export default function JobToolsPage() {
                 <div style={{ display: "flex", gap: 10, flexWrap: "wrap" }}>
                   <button
                     type="button"
-                    onClick={toggleAllToolsForPickup}
+                    onClick={toggleAllAssignedTools}
                     style={secondaryButtonStyle}
                   >
-                    {selectedToolIds.length === filteredTools.length && filteredTools.length > 0
+                    {selectedAssignedToolIds.length === assignedTools.length && assignedTools.length > 0
                       ? "Clear Selection"
                       : "Select All Assigned Tools"}
                   </button>
@@ -738,49 +1029,170 @@ export default function JobToolsPage() {
                     overflow: "auto",
                   }}
                 >
-                  {filteredTools.length === 0 ? (
-                    <div style={emptyStateStyle}>No tools assigned to this job.</div>
+                  {assignedTools.length === 0 ? (
+                    <div style={emptyStateStyle}>No tools are currently assigned to this job.</div>
                   ) : (
-                    filteredTools.map((tool) => {
-                      const checked = selectedToolIds.includes(tool.id);
+                    assignedTools.map((item) => {
+                      const checked = selectedAssignedToolIds.includes(item.id);
+                      const maxQty = Math.max(getAvailableQty(item), 1);
+                      const qtyValue = selectedAssignedToolQtys[item.id] ?? 1;
 
                       return (
-                        <label key={tool.id} style={pickupRowStyle}>
-                          <input
-                            type="checkbox"
-                            checked={checked}
-                            onChange={() => toggleSelectedTool(tool.id)}
-                          />
-                          <div style={{ display: "grid", gap: 4 }}>
-                            <div style={{ fontWeight: 700, color: "#f5f5f5" }}>
-                              {buildToolTitle(tool)}
+                        <div key={item.id} style={pickupRowStyle}>
+                          <label
+                            style={{
+                              display: "grid",
+                              gridTemplateColumns: "20px 1fr",
+                              gap: 12,
+                              alignItems: "start",
+                              cursor: "pointer",
+                            }}
+                          >
+                            <input
+                              type="checkbox"
+                              checked={checked}
+                              onChange={() => toggleSelectedAssignedTool(item.id)}
+                            />
+                            <div style={{ display: "grid", gap: 4 }}>
+                              <div style={{ fontWeight: 700, color: "#f5f5f5" }}>
+                                {buildToolTitle(item)}
+                              </div>
+                              <div style={{ fontSize: 13, color: "#d1d5db" }}>
+                                {buildToolSubtitle(item)}
+                              </div>
+                              <div style={{ fontSize: 12, color: "#a3a3a3" }}>
+                                Qty Assigned: {item.quantityAvailable ?? 0} • {buildToolLocation(item)}
+                              </div>
                             </div>
-                            <div style={{ fontSize: 13, color: "#d1d5db" }}>
-                              {buildToolSubtitle(tool)}
+                          </label>
+
+                          {checked ? (
+                            <div
+                              style={{
+                                marginTop: 10,
+                                display: "grid",
+                                gridTemplateColumns: "160px 1fr",
+                                gap: 10,
+                                alignItems: "center",
+                              }}
+                            >
+                              <div style={{ fontSize: 13, color: "#d1d5db", fontWeight: 700 }}>
+                                Pickup Quantity
+                              </div>
+                              <input
+                                type="number"
+                                min={1}
+                                max={maxQty}
+                                value={qtyValue}
+                                onChange={(e) =>
+                                  updateSelectedAssignedToolQty(
+                                    item.id,
+                                    Math.min(
+                                      Math.max(Number(e.target.value) || 1, 1),
+                                      maxQty
+                                    )
+                                  )
+                                }
+                                style={qtyInputStyle}
+                              />
                             </div>
-                            <div style={{ fontSize: 12, color: "#a3a3a3" }}>
-                              {buildToolLocation(tool)}
-                            </div>
-                          </div>
-                        </label>
+                          ) : null}
+                        </div>
                       );
                     })
                   )}
                 </div>
               </div>
             ) : null}
+
+            <RequestsTable rows={toolRequests} />
           </div>
         </Section>
 
-        <Section title="Assigned Tools">
-          <ToolTable rows={filteredTools} readOnly />
+        <Section title="Assigned Tools on This Job">
+          {assignedTools.length === 0 ? (
+            <div style={emptyStateStyle}>No tools are currently assigned to this job.</div>
+          ) : (
+            <ToolCards rows={assignedTools} />
+          )}
         </Section>
 
-        <Section title="Tool Request History">
-          <RequestsTable rows={toolRequests} />
+        <Section title="Available Shop Tools">
+          {availableTools.length === 0 ? (
+            <div style={emptyStateStyle}>No available tools found in shop locations.</div>
+          ) : (
+            <ToolCards rows={availableTools} />
+          )}
         </Section>
       </div>
-    </main>
+    </div>
+  );
+}
+
+function ToolCards({ rows }: { rows: ToolItem[] }) {
+  return (
+    <div style={{ display: "grid", gap: 14 }}>
+      {rows.map((row) => (
+        <div key={row.id} style={cardStyle}>
+          <div style={cardHeaderStyle}>
+            <div style={{ display: "grid", gap: 6 }}>
+              <div style={{ fontSize: 18, fontWeight: 700, color: "#f5f5f5" }}>
+                {buildToolTitle(row)}
+              </div>
+              <div style={{ color: "#d1d5db", fontSize: 14 }}>{buildToolSubtitle(row)}</div>
+              <div style={{ color: "#a3a3a3", fontSize: 13 }}>{buildToolLocation(row)}</div>
+            </div>
+
+            <div
+              style={{
+                padding: "8px 12px",
+                borderRadius: 999,
+                border: "1px solid #3a3a3a",
+                background: "#141414",
+                color: "#f5f5f5",
+                fontSize: 13,
+                fontWeight: 700,
+                alignSelf: "flex-start",
+              }}
+            >
+              Qty {row.quantityAvailable ?? 0}
+            </div>
+          </div>
+
+          <div style={detailsGridStyle}>
+            <Detail label="Category" value={row.category} />
+            <Detail label="Barcode" value={row.barcode} />
+            <Detail label="Item Number" value={row.itemNumber} />
+            <Detail label="Manufacturer" value={row.manufacturer} />
+            <Detail label="Model" value={row.model} />
+            <Detail label="Serial Number" value={row.serialNumber} />
+            <Detail label="Quantity" value={String(row.quantityAvailable ?? 0)} />
+            <Detail label="Assignment Type" value={row.assignmentType} />
+            <Detail label="Assigned To" value={row.assignedTo} />
+            <Detail label="Job#" value={row.jobNumber} />
+            <Detail label="Location" value={row.toolRoomLocation} />
+            <Detail label="Transfer Date In" value={row.transferDateIn} />
+            <Detail label="Transfer Date Out" value={row.transferDateOut} />
+          </div>
+        </div>
+      ))}
+    </div>
+  );
+}
+
+function Detail({ label, value }: { label: string; value: string | number | undefined }) {
+  return (
+    <div
+      style={{
+        background: "#141414",
+        border: "1px solid #2f2f2f",
+        borderRadius: 10,
+        padding: "10px 12px",
+      }}
+    >
+      <div style={{ fontSize: 12, color: "#a3a3a3", marginBottom: 4 }}>{label}</div>
+      <div style={{ fontSize: 14, fontWeight: 600, color: "#f5f5f5" }}>{value || "-"}</div>
+    </div>
   );
 }
 
@@ -792,17 +1204,38 @@ function JobNavTabs({
   active: "dashboard" | "materials" | "prefab" | "tools" | "equipment";
 }) {
   const tabs = [
-    { key: "dashboard", label: "Dashboard", href: `/jobs/${encodeURIComponent(jobNumber)}` },
-    { key: "materials", label: "Materials", href: `/jobs/${encodeURIComponent(jobNumber)}/materials` },
-    { key: "prefab", label: "Prefab", href: `/jobs/${encodeURIComponent(jobNumber)}/prefab` },
-    { key: "tools", label: "Tools", href: `/jobs/${encodeURIComponent(jobNumber)}/tools` },
-    { key: "equipment", label: "Equipment", href: `/jobs/${encodeURIComponent(jobNumber)}/equipment` },
+    {
+      key: "dashboard",
+      label: "Dashboard",
+      href: `/jobs/${encodeURIComponent(jobNumber)}`,
+    },
+    {
+      key: "materials",
+      label: "Materials",
+      href: `/jobs/${encodeURIComponent(jobNumber)}/materials`,
+    },
+    {
+      key: "prefab",
+      label: "Prefab",
+      href: `/jobs/${encodeURIComponent(jobNumber)}/prefab`,
+    },
+    {
+      key: "tools",
+      label: "Tools",
+      href: `/jobs/${encodeURIComponent(jobNumber)}/tools`,
+    },
+    {
+      key: "equipment",
+      label: "Equipment",
+      href: `/jobs/${encodeURIComponent(jobNumber)}/equipment`,
+    },
   ] as const;
 
   return (
     <div style={{ display: "flex", gap: 10, flexWrap: "wrap" }}>
       {tabs.map((tab) => {
         const isActive = tab.key === active;
+
         return (
           <Link
             key={tab.key}
@@ -921,16 +1354,44 @@ const secondaryButtonStyle: React.CSSProperties = {
   background: "#2a2a2a",
 };
 
+const smallButtonStyle: React.CSSProperties = {
+  border: "1px solid #3a3a3a",
+  borderRadius: 8,
+  padding: "8px 12px",
+  color: "white",
+  cursor: "pointer",
+  fontSize: 13,
+  fontWeight: 700,
+  background: "#2a2a2a",
+};
+
 const pickupRowStyle: React.CSSProperties = {
   display: "grid",
-  gridTemplateColumns: "20px 1fr",
-  gap: 12,
-  alignItems: "start",
+  gap: 10,
   background: "#141414",
   border: "1px solid #2f2f2f",
   borderRadius: 10,
   padding: 12,
-  cursor: "pointer",
+};
+
+const lineCardStyle: React.CSSProperties = {
+  display: "grid",
+  gap: 12,
+  background: "#141414",
+  border: "1px solid #2f2f2f",
+  borderRadius: 10,
+  padding: 14,
+};
+
+const lineMetaStyle: React.CSSProperties = {
+  display: "grid",
+  gap: 4,
+  fontSize: 13,
+  color: "#a3a3a3",
+  background: "#101010",
+  border: "1px solid #262626",
+  borderRadius: 8,
+  padding: "10px 12px",
 };
 
 const emptyStateStyle: React.CSSProperties = {
@@ -939,4 +1400,50 @@ const emptyStateStyle: React.CSSProperties = {
   borderRadius: 10,
   padding: 16,
   color: "#a3a3a3",
+};
+
+const fieldInputStyle: React.CSSProperties = {
+  width: "100%",
+  padding: "12px",
+  borderRadius: 8,
+  border: "1px solid #3a3a3a",
+  fontSize: 16,
+  boxSizing: "border-box",
+  background: "#121212",
+  color: "#f5f5f5",
+};
+
+const qtyInputStyle: React.CSSProperties = {
+  width: "100%",
+  padding: "10px 12px",
+  borderRadius: 8,
+  border: "1px solid #3a3a3a",
+  fontSize: 14,
+  boxSizing: "border-box",
+  background: "#121212",
+  color: "#f5f5f5",
+};
+
+const cardStyle: React.CSSProperties = {
+  background: "#1a1a1a",
+  border: "1px solid #2f2f2f",
+  borderRadius: 14,
+  padding: 16,
+  display: "grid",
+  gap: 14,
+  boxShadow: "0 4px 14px rgba(0, 0, 0, 0.25)",
+};
+
+const cardHeaderStyle: React.CSSProperties = {
+  display: "flex",
+  justifyContent: "space-between",
+  gap: 12,
+  flexWrap: "wrap",
+  alignItems: "flex-start",
+};
+
+const detailsGridStyle: React.CSSProperties = {
+  display: "grid",
+  gridTemplateColumns: "repeat(auto-fit, minmax(140px, 1fr))",
+  gap: 10,
 };

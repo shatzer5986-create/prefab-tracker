@@ -8,8 +8,6 @@ import Section from "@/components/Section";
 import StatCard from "@/components/StatCard";
 import EquipmentTable from "@/components/EquipmentTable";
 import RequestsTable from "@/components/RequestsTable";
-import InventoryRequestPicker from "@/components/InventoryRequestPicker";
-import RequestForm from "@/components/RequestForm";
 
 import type {
   AppData,
@@ -20,10 +18,10 @@ import type {
   JobRequest,
   JobRequestLine,
 } from "@/types";
-import type { RequestFormState } from "@/components/RequestForm";
 
 const STORAGE_KEY = "prefab-tracker-v7";
 const MASTER_EQUIPMENT_KEY = "master-equipment-inventory-v1";
+const SHOP_LOCATIONS = ["Tool Room", "Shop", "Yard", "WH1", "WH2"] as const;
 
 const fallbackData: AppData = {
   jobs: [],
@@ -41,6 +39,13 @@ const fallbackData: AppData = {
   notifications: [],
   tickets: [],
   employees: [],
+};
+
+type RequestLineDraft = {
+  rowId: number;
+  category: string;
+  inventoryItemId: number | "";
+  quantity: number;
 };
 
 function loadStoredAppData(): AppData | null {
@@ -73,21 +78,14 @@ function safeString(value: unknown) {
   return typeof value === "string" ? value.trim() : "";
 }
 
-function emptyEquipmentRequestForm(jobNumber: string): RequestFormState {
-  return {
-    jobNumber,
-    type: "Equipment" as const,
-    requestedBy: "",
-    neededBy: "",
-    itemName: "",
-    description: "",
-    quantity: 1,
-    unit: "ea",
-    notes: "",
-    inventoryItemId: null as number | null,
-    inventorySnapshot: "",
-    lines: [],
-  };
+function safeNumber(value: unknown, fallback = 0) {
+  const n = Number(value);
+  return Number.isFinite(n) ? n : fallback;
+}
+
+function isShopLocation(value: string) {
+  const normalized = safeString(value).toLowerCase();
+  return SHOP_LOCATIONS.some((loc) => loc.toLowerCase() === normalized);
 }
 
 function buildEquipmentLocation(item: EquipmentItem) {
@@ -157,6 +155,19 @@ function buildEquipmentSubtitle(item: EquipmentItem) {
     .join(" • ");
 }
 
+function getAvailableQty(item: EquipmentItem) {
+  return Math.max(safeNumber(item.quantityAvailable, 0), 0);
+}
+
+function createEmptyRequestLine(): RequestLineDraft {
+  return {
+    rowId: Date.now() + Math.floor(Math.random() * 100000),
+    category: "",
+    inventoryItemId: "",
+    quantity: 1,
+  };
+}
+
 export default function JobEquipmentPage() {
   const params = useParams<{ jobNumber: string }>();
   const jobNumber = decodeURIComponent(params.jobNumber);
@@ -170,12 +181,13 @@ export default function JobEquipmentPage() {
   const [showRequestForm, setShowRequestForm] = useState(false);
   const [showPickupForm, setShowPickupForm] = useState(false);
 
-  const [inventorySearch, setInventorySearch] = useState("");
-  const [equipmentRequestForm, setEquipmentRequestForm] = useState<RequestFormState>(() =>
-    emptyEquipmentRequestForm(jobNumber)
-  );
+  const [requestLines, setRequestLines] = useState<RequestLineDraft[]>([createEmptyRequestLine()]);
+  const [requestRequestedBy, setRequestRequestedBy] = useState("");
+  const [requestNeededBy, setRequestNeededBy] = useState("");
+  const [requestNotes, setRequestNotes] = useState("");
 
   const [selectedEquipmentIds, setSelectedEquipmentIds] = useState<number[]>([]);
+  const [selectedEquipmentQtys, setSelectedEquipmentQtys] = useState<Record<number, number>>({});
   const [pickupRequestedBy, setPickupRequestedBy] = useState("");
   const [pickupNeededBy, setPickupNeededBy] = useState("");
   const [pickupToLocation, setPickupToLocation] = useState("Shop");
@@ -191,14 +203,44 @@ export default function JobEquipmentPage() {
     setEmployees(parsed?.employees || fallbackData.employees);
   }
 
-  useEffect(() => {
-    setEquipmentRequestForm(emptyEquipmentRequestForm(jobNumber));
-    setInventorySearch("");
+  function persistRequestsAndNotifications(
+    nextRequests: JobRequest[],
+    nextNotifications: AppNotification[]
+  ) {
+    const latest = loadStoredAppData() || fallbackData;
+
+    const updatedData: AppData = {
+      ...latest,
+      requests: nextRequests,
+      notifications: nextNotifications,
+      equipmentInventory: latest.equipmentInventory || [],
+    };
+
+    localStorage.setItem(STORAGE_KEY, JSON.stringify(updatedData));
+
+    setRequests(nextRequests);
+    setNotifications(nextNotifications);
+  }
+
+  function resetRequestForm() {
+    setRequestLines([createEmptyRequestLine()]);
+    setRequestRequestedBy("");
+    setRequestNeededBy("");
+    setRequestNotes("");
+  }
+
+  function resetPickupForm() {
     setSelectedEquipmentIds([]);
+    setSelectedEquipmentQtys({});
     setPickupRequestedBy("");
     setPickupNeededBy("");
     setPickupToLocation("Shop");
     setPickupNotes("");
+  }
+
+  useEffect(() => {
+    resetRequestForm();
+    resetPickupForm();
   }, [jobNumber]);
 
   useEffect(() => {
@@ -231,20 +273,55 @@ export default function JobEquipmentPage() {
   }, [jobNumber]);
 
   const currentJob = useMemo(
-    () => jobs.find((job) => job.jobNumber === jobNumber) || null,
+    () => jobs.find((job) => safeString(job.jobNumber) === safeString(jobNumber)) || null,
     [jobs, jobNumber]
   );
 
   const filteredEquipment = useMemo(
-    () => equipmentInventory.filter((item) => item.jobNumber === jobNumber),
+    () =>
+      equipmentInventory.filter(
+        (item) =>
+          safeString(item.assignmentType) === "Job" &&
+          safeString(item.jobNumber) === safeString(jobNumber)
+      ),
     [equipmentInventory, jobNumber]
+  );
+
+  const requestableEquipment = useMemo(
+    () =>
+      [...equipmentInventory]
+        .filter((item) => {
+          if (safeString(item.status) !== "Working") return false;
+          const qty = getAvailableQty(item);
+          if (qty < 1) return false;
+
+          const location =
+            safeString(item.toolRoomLocation) ||
+            safeString(item.assignmentType) ||
+            safeString(item.jobNumber);
+
+          return (
+            isShopLocation(location) ||
+            item.assignmentType === "Tool Room" ||
+            item.assignmentType === "Shop" ||
+            item.assignmentType === "Yard" ||
+            item.assignmentType === "WH1" ||
+            item.assignmentType === "WH2"
+          );
+        })
+        .sort((a, b) => {
+          const categoryCompare = safeString(a.category).localeCompare(safeString(b.category));
+          if (categoryCompare !== 0) return categoryCompare;
+          return buildEquipmentTitle(a).localeCompare(buildEquipmentTitle(b));
+        }),
+    [equipmentInventory]
   );
 
   const equipmentRequests = useMemo(
     () =>
       requests.filter(
         (item) =>
-          item.jobNumber === jobNumber &&
+          safeString(item.jobNumber) === safeString(jobNumber) &&
           (item.lines || []).some((line) => line.type === "Equipment")
       ),
     [requests, jobNumber]
@@ -257,53 +334,19 @@ export default function JobEquipmentPage() {
       .map((employee) => employee.name);
   }, [employees]);
 
-  const equipmentPickerItems = useMemo(() => {
-    return equipmentInventory.map((item) => {
-      const title = buildEquipmentTitle(item);
-      const subtitle = buildEquipmentSubtitle(item);
-      const location = buildEquipmentLocation(item);
-      const badge = safeString(item.assetType) || "Equipment";
-
-      return {
-        id: item.id,
-        title,
-        subtitle,
-        meta: location,
-        badge,
-        status: item.status,
-        qtyAvailable: Number(item.quantityAvailable || 0),
-        searchText: [
-          badge,
-          title,
-          subtitle,
-          location,
-          item.description,
-          item.category,
-          item.itemNumber,
-          item.barcode,
-          item.manufacturer,
-          item.model,
-          item.serialNumber,
-          item.licensePlate,
-          item.vinSerial,
-          item.assetNumber,
-          item.year,
-          item.jobNumber,
-          item.assignedTo,
-          item.toolRoomLocation,
-        ]
+  const requestCategories = useMemo(() => {
+    return Array.from(
+      new Set(
+        equipmentInventory
+          .map((item) => safeString(item.category))
           .filter(Boolean)
-          .join(" "),
-      };
-    });
+      )
+    ).sort((a, b) => a.localeCompare(b));
   }, [equipmentInventory]);
 
   const totalQty = useMemo(
     () =>
-      filteredEquipment.reduce(
-        (sum, row) => sum + Number(row.quantityAvailable || 0),
-        0
-      ),
+      filteredEquipment.reduce((sum, row) => sum + safeNumber(row.quantityAvailable, 0), 0),
     [filteredEquipment]
   );
 
@@ -335,39 +378,123 @@ export default function JobEquipmentPage() {
     [filteredEquipment]
   );
 
-  function toggleSelectedEquipment(id: number) {
-    setSelectedEquipmentIds((prev) =>
-      prev.includes(id) ? prev.filter((value) => value !== id) : [...prev, id]
+  function addRequestLine() {
+    setRequestLines((prev) => [...prev, createEmptyRequestLine()]);
+  }
+
+  function removeRequestLine(rowId: number) {
+    setRequestLines((prev) => {
+      if (prev.length <= 1) return prev;
+      return prev.filter((line) => line.rowId !== rowId);
+    });
+  }
+
+  function updateRequestLine(
+    rowId: number,
+    patch: Partial<RequestLineDraft>,
+    options?: { resetSelection?: boolean }
+  ) {
+    setRequestLines((prev) =>
+      prev.map((line) => {
+        if (line.rowId !== rowId) return line;
+
+        const next: RequestLineDraft = {
+          ...line,
+          ...patch,
+        };
+
+        if (options?.resetSelection) {
+          next.inventoryItemId = "";
+          next.quantity = 1;
+        }
+
+        return next;
+      })
     );
   }
 
-  function toggleAllEquipmentForPickup() {
-    const allIds = filteredEquipment.map((item) => item.id);
+  function getLineEquipmentOptions(line: RequestLineDraft) {
+    const category = safeString(line.category);
+    if (!category) return [];
 
-    setSelectedEquipmentIds((prev) =>
-      prev.length === allIds.length ? [] : allIds
-    );
+    return equipmentInventory
+      .filter((item) => safeString(item.category) === category)
+      .sort((a, b) => buildEquipmentTitle(a).localeCompare(buildEquipmentTitle(b)));
   }
 
-  function saveEquipmentRequest() {
-    const hasMinimumData =
-      equipmentRequestForm.itemName.trim() ||
-      equipmentRequestForm.description.trim() ||
-      equipmentRequestForm.notes.trim();
+  function createEquipmentRequest() {
+    if (!safeString(requestRequestedBy)) {
+      alert("Select Requested By.");
+      return;
+    }
 
-    if (!hasMinimumData) return;
+    const cleanedLines = requestLines.filter(
+      (line) => safeString(line.category) || line.inventoryItemId !== ""
+    );
 
-    const line: JobRequestLine = {
-      id: Date.now() + 1,
+    if (!cleanedLines.length) {
+      alert("Add at least one request line.");
+      return;
+    }
+
+    const missingCategory = cleanedLines.find((line) => !safeString(line.category));
+    if (missingCategory) {
+      alert("Each request line needs a category.");
+      return;
+    }
+
+    const missingItem = cleanedLines.find((line) => line.inventoryItemId === "");
+    if (missingItem) {
+      alert("Each request line needs an equipment item.");
+      return;
+    }
+
+    const validatedSelections: Array<{
+      line: RequestLineDraft;
+      item: EquipmentItem;
+      qty: number;
+    }> = [];
+
+    const duplicateCheck = new Set<number>();
+
+    for (const line of cleanedLines) {
+      const selectedId = Number(line.inventoryItemId);
+      const item = equipmentInventory.find((row) => Number(row.id) === selectedId);
+
+      if (!item) {
+        alert("One of the selected equipment items is no longer available. Please reselect it.");
+        return;
+      }
+
+      if (duplicateCheck.has(selectedId)) {
+        alert("The same equipment item is selected more than once. Use one line per item.");
+        return;
+      }
+
+      duplicateCheck.add(selectedId);
+
+      const qty = Math.max(1, Number(line.quantity) || 1);
+
+      validatedSelections.push({
+        line,
+        item,
+        qty,
+      });
+    }
+
+    const lines: JobRequestLine[] = validatedSelections.map(({ item, qty }, index) => ({
+      id: Date.now() + index + 1,
       type: "Equipment",
-      category: "",
-      itemName: equipmentRequestForm.itemName.trim(),
-      description: equipmentRequestForm.description.trim(),
-      quantity: Number(equipmentRequestForm.quantity) || 0,
-      unit: equipmentRequestForm.unit.trim() || "ea",
-      inventoryItemId: equipmentRequestForm.inventoryItemId ?? null,
-      inventorySnapshot: equipmentRequestForm.inventorySnapshot ?? "",
-    };
+      category: safeString(item.category),
+      itemName: buildEquipmentTitle(item),
+      description: [buildEquipmentSubtitle(item), buildEquipmentLocation(item)]
+        .filter(Boolean)
+        .join(" | "),
+      quantity: qty,
+      unit: "ea",
+      inventoryItemId: item.id,
+      inventorySnapshot: JSON.stringify(item),
+    }));
 
     const newRequest: JobRequest = {
       id: Date.now(),
@@ -375,14 +502,14 @@ export default function JobEquipmentPage() {
       requestFlow: "To Job",
       jobNumber,
       requestedForPerson: "",
-      requestedBy: equipmentRequestForm.requestedBy.trim(),
+      requestedBy: safeString(requestRequestedBy),
       requestDate: new Date().toISOString().slice(0, 10),
-      neededBy: equipmentRequestForm.neededBy,
+      neededBy: requestNeededBy,
       status: "Open",
-      notes: equipmentRequestForm.notes.trim(),
+      notes: safeString(requestNotes),
       fromLocation: "Shop",
       toLocation: jobNumber,
-      lines: [line],
+      lines,
       workflowStatus: "Request Submitted",
       pickTicketId: null,
       pickTicketNumber: "",
@@ -402,27 +529,70 @@ export default function JobEquipmentPage() {
       type: "Request Submitted",
       title: "Equipment request submitted",
       message:
-        (newRequest.lines || []).map((line) => line.itemName).join(", ") ||
-        "Items requested.",
+        (newRequest.lines || [])
+          .map(
+            (line) => `${line.itemName} (${line.quantity}${line.unit ? ` ${line.unit}` : ""})`
+          )
+          .join(", ") || "Items requested.",
       createdAt: new Date().toISOString(),
       isRead: false,
     };
 
     const nextNotifications = [newNotification, ...(latest.notifications || [])];
+    persistRequestsAndNotifications(nextRequests, nextNotifications);
 
-    const updatedData: AppData = {
-      ...latest,
-      requests: nextRequests,
-      notifications: nextNotifications,
-    };
-
-    localStorage.setItem(STORAGE_KEY, JSON.stringify(updatedData));
-
-    setRequests(nextRequests);
-    setNotifications(nextNotifications);
-    setEquipmentRequestForm(emptyEquipmentRequestForm(jobNumber));
-    setInventorySearch("");
+    resetRequestForm();
     setShowRequestForm(false);
+  }
+
+  function toggleSelectedEquipment(id: number) {
+    setSelectedEquipmentIds((prev) => {
+      if (prev.includes(id)) {
+        const next = prev.filter((value) => value !== id);
+        setSelectedEquipmentQtys((current) => {
+          const updated = { ...current };
+          delete updated[id];
+          return updated;
+        });
+        return next;
+      }
+
+      const selectedItem = filteredEquipment.find((item) => item.id === id);
+      const defaultQty = Math.max(Math.min(getAvailableQty(selectedItem as EquipmentItem), 1), 1);
+
+      setSelectedEquipmentQtys((current) => ({
+        ...current,
+        [id]: defaultQty,
+      }));
+
+      return [...prev, id];
+    });
+  }
+
+  function updateSelectedEquipmentQty(id: number, qty: number) {
+    setSelectedEquipmentQtys((prev) => ({
+      ...prev,
+      [id]: Math.max(1, qty || 1),
+    }));
+  }
+
+  function toggleAllEquipmentForPickup() {
+    const allIds = filteredEquipment.map((item) => item.id);
+
+    setSelectedEquipmentIds((prev) => {
+      if (prev.length === allIds.length) {
+        setSelectedEquipmentQtys({});
+        return [];
+      }
+
+      const qtyMap: Record<number, number> = {};
+      for (const item of filteredEquipment) {
+        qtyMap[item.id] = Math.max(Math.min(getAvailableQty(item), 1), 1);
+      }
+
+      setSelectedEquipmentQtys(qtyMap);
+      return allIds;
+    });
   }
 
   function createPickupRequest() {
@@ -445,6 +615,21 @@ export default function JobEquipmentPage() {
       return;
     }
 
+    const invalidQtyItem = selectedItems.find((item) => {
+      const requestedQty = safeNumber(selectedEquipmentQtys[item.id], 1);
+      const maxQty = getAvailableQty(item);
+      return requestedQty < 1 || requestedQty > maxQty;
+    });
+
+    if (invalidQtyItem) {
+      alert(
+        `Requested quantity for ${buildEquipmentTitle(
+          invalidQtyItem
+        )} must be between 1 and ${getAvailableQty(invalidQtyItem)}.`
+      );
+      return;
+    }
+
     const lines: JobRequestLine[] = selectedItems.map((item, index) => ({
       id: Date.now() + index + 1,
       type: "Equipment",
@@ -453,7 +638,7 @@ export default function JobEquipmentPage() {
       description: [buildEquipmentSubtitle(item), buildEquipmentLocation(item)]
         .filter(Boolean)
         .join(" | "),
-      quantity: Number(item.quantityAvailable) || 1,
+      quantity: safeNumber(selectedEquipmentQtys[item.id], 1),
       unit: "ea",
       inventoryItemId: item.id,
       inventorySnapshot: JSON.stringify(item),
@@ -492,30 +677,19 @@ export default function JobEquipmentPage() {
       type: "Request Submitted",
       title: "Equipment pickup request submitted",
       message:
-        (newRequest.lines || []).map((line) => line.itemName).join(", ") ||
-        "Items requested.",
+        (newRequest.lines || [])
+          .map(
+            (line) => `${line.itemName} (${line.quantity}${line.unit ? ` ${line.unit}` : ""})`
+          )
+          .join(", ") || "Items requested.",
       createdAt: new Date().toISOString(),
       isRead: false,
     };
 
     const nextNotifications = [newNotification, ...(latest.notifications || [])];
+    persistRequestsAndNotifications(nextRequests, nextNotifications);
 
-    const updatedData: AppData = {
-      ...latest,
-      requests: nextRequests,
-      notifications: nextNotifications,
-    };
-
-    localStorage.setItem(STORAGE_KEY, JSON.stringify(updatedData));
-
-    setRequests(nextRequests);
-    setNotifications(nextNotifications);
-
-    setSelectedEquipmentIds([]);
-    setPickupRequestedBy("");
-    setPickupNeededBy("");
-    setPickupToLocation("Shop");
-    setPickupNotes("");
+    resetPickupForm();
     setShowPickupForm(false);
   }
 
@@ -544,11 +718,12 @@ export default function JobEquipmentPage() {
             gap: 16,
           }}
         >
-          <StatCard title="Equipment Rows" value={String(filteredEquipment.length)} />
+          <StatCard title="Assigned Equipment Rows" value={String(filteredEquipment.length)} />
           <StatCard
             title="Master Equipment List Rows"
             value={String(equipmentInventory.length)}
           />
+          <StatCard title="Requestable Equipment Rows" value={String(requestableEquipment.length)} />
           <StatCard title="Total Qty" value={String(totalQty)} />
           <StatCard title="Assigned to Person" value={String(assignedToPersonCount)} />
           <StatCard title="Stored / Yard / WH" value={String(storedCount)} />
@@ -565,7 +740,10 @@ export default function JobEquipmentPage() {
             <div style={{ display: "flex", gap: 10, flexWrap: "wrap" }}>
               <button
                 type="button"
-                onClick={() => setShowRequestForm((prev) => !prev)}
+                onClick={() => {
+                  setShowRequestForm((prev) => !prev);
+                  if (showPickupForm) setShowPickupForm(false);
+                }}
                 style={{
                   ...requestButtonStyle,
                   background: showRequestForm ? "#ea580c" : "#c2410c",
@@ -577,7 +755,10 @@ export default function JobEquipmentPage() {
 
               <button
                 type="button"
-                onClick={() => setShowPickupForm((prev) => !prev)}
+                onClick={() => {
+                  setShowPickupForm((prev) => !prev);
+                  if (showRequestForm) setShowRequestForm(false);
+                }}
                 style={{
                   ...requestButtonStyle,
                   background: showPickupForm ? "#15803d" : "#166534",
@@ -591,54 +772,202 @@ export default function JobEquipmentPage() {
             {showRequestForm ? (
               <div style={panelCardStyle}>
                 <div style={{ fontSize: 18, fontWeight: 700, color: "#f5f5f5" }}>
-                  Equipment Request
+                  Request Equipment from Master List
                 </div>
 
-                <InventoryRequestPicker
-                  label="Pick From Master Equipment List"
-                  searchValue={inventorySearch}
-                  onSearchChange={setInventorySearch}
-                  items={equipmentPickerItems}
-                  onSelect={(picked) => {
-                    const selectedEquipment = equipmentInventory.find(
-                      (equipment) => equipment.id === picked.id
+                <div style={{ fontSize: 13, color: "#d1d5db" }}>
+                  Pick a category first, then choose the equipment item from that category.
+                </div>
+
+                <div
+                  style={{
+                    display: "grid",
+                    gridTemplateColumns: "repeat(auto-fit, minmax(220px, 1fr))",
+                    gap: 12,
+                  }}
+                >
+                  <Field label="Requested By">
+                    <select
+                      value={requestRequestedBy}
+                      onChange={(e) => setRequestRequestedBy(e.target.value)}
+                      style={inputStyle}
+                    >
+                      <option value="">Select employee</option>
+                      {employeeOptions.map((employee) => (
+                        <option key={employee} value={employee}>
+                          {employee}
+                        </option>
+                      ))}
+                    </select>
+                  </Field>
+
+                  <Field label="Needed By">
+                    <input
+                      type="date"
+                      value={requestNeededBy}
+                      onChange={(e) => setRequestNeededBy(e.target.value)}
+                      style={inputStyle}
+                    />
+                  </Field>
+
+                  <Field label="Notes">
+                    <input
+                      value={requestNotes}
+                      onChange={(e) => setRequestNotes(e.target.value)}
+                      style={inputStyle}
+                    />
+                  </Field>
+                </div>
+
+                <div style={{ display: "grid", gap: 12 }}>
+                  {requestLines.map((line, index) => {
+                    const equipmentOptions = getLineEquipmentOptions(line);
+                    const selectedItem =
+                      line.inventoryItemId === ""
+                        ? null
+                        : equipmentInventory.find((item) => item.id === line.inventoryItemId) ||
+                          null;
+
+                    const maxQty = selectedItem ? Math.max(getAvailableQty(selectedItem), 1) : 1;
+
+                    return (
+                      <div key={line.rowId} style={lineCardStyle}>
+                        <div
+                          style={{
+                            display: "flex",
+                            justifyContent: "space-between",
+                            alignItems: "center",
+                            gap: 12,
+                            flexWrap: "wrap",
+                          }}
+                        >
+                          <div style={{ fontSize: 15, fontWeight: 700, color: "#f5f5f5" }}>
+                            Request Line {index + 1}
+                          </div>
+
+                          <button
+                            type="button"
+                            onClick={() => removeRequestLine(line.rowId)}
+                            disabled={requestLines.length === 1}
+                            style={{
+                              ...smallButtonStyle,
+                              opacity: requestLines.length === 1 ? 0.5 : 1,
+                              cursor: requestLines.length === 1 ? "not-allowed" : "pointer",
+                            }}
+                          >
+                            Remove Line
+                          </button>
+                        </div>
+
+                        <div
+                          style={{
+                            display: "grid",
+                            gridTemplateColumns: "minmax(180px, 1fr) minmax(260px, 2fr) 120px",
+                            gap: 12,
+                          }}
+                        >
+                          <Field label="Category">
+                            <select
+                              value={line.category}
+                              onChange={(e) =>
+                                updateRequestLine(
+                                  line.rowId,
+                                  { category: e.target.value },
+                                  { resetSelection: true }
+                                )
+                              }
+                              style={inputStyle}
+                            >
+                              <option value="">Select category</option>
+                              {requestCategories.map((category) => (
+                                <option key={category} value={category}>
+                                  {category}
+                                </option>
+                              ))}
+                            </select>
+                          </Field>
+
+                          <Field label="Equipment Name">
+                            <select
+                              value={line.inventoryItemId === "" ? "" : String(line.inventoryItemId)}
+                              onChange={(e) =>
+                                updateRequestLine(line.rowId, {
+                                  inventoryItemId: e.target.value ? Number(e.target.value) : "",
+                                  quantity: 1,
+                                })
+                              }
+                              style={inputStyle}
+                              disabled={!line.category}
+                            >
+                              <option value="">
+                                {line.category ? "Select equipment" : "Select category first"}
+                              </option>
+                              {equipmentOptions.map((item) => (
+                                <option key={item.id} value={String(item.id)}>
+                                  {[
+                                    buildEquipmentTitle(item),
+                                    safeString(item.status),
+                                    safeString(item.toolRoomLocation) ||
+                                      safeString(item.assignmentType),
+                                  ]
+                                    .filter(Boolean)
+                                    .join(" • ")}
+                                </option>
+                              ))}
+                            </select>
+                          </Field>
+
+                          <Field label="Qty">
+                            <input
+                              type="number"
+                              min={1}
+                              max={maxQty}
+                              value={line.quantity}
+                              onChange={(e) =>
+                                updateRequestLine(line.rowId, {
+                                  quantity: Math.min(
+                                    Math.max(Number(e.target.value) || 1, 1),
+                                    maxQty
+                                  ),
+                                })
+                              }
+                              style={inputStyle}
+                              disabled={!selectedItem}
+                            />
+                          </Field>
+                        </div>
+
+                        {selectedItem ? (
+                          <div style={lineMetaStyle}>
+                            <div>{buildEquipmentSubtitle(selectedItem)}</div>
+                            <div>
+                              Qty Available: {getAvailableQty(selectedItem)} •{" "}
+                              {buildEquipmentLocation(selectedItem)}
+                            </div>
+                          </div>
+                        ) : null}
+                      </div>
                     );
+                  })}
+                </div>
 
-                    setInventorySearch(picked.title);
+                <div style={{ display: "flex", gap: 10, flexWrap: "wrap" }}>
+                  <button type="button" onClick={addRequestLine} style={secondaryButtonStyle}>
+                    Add Request Line
+                  </button>
 
-                    setEquipmentRequestForm((prev) => ({
-                      ...prev,
-                      itemName: picked.title,
-                      description: [picked.subtitle, picked.meta]
-                        .filter(Boolean)
-                        .join(" | "),
-                      quantity: 1,
-                      unit: "ea",
-                      notes: `Inventory status: ${picked.status || "-"} | Qty available: ${
-                        picked.qtyAvailable ?? 0
-                      }${picked.meta ? ` | ${picked.meta}` : ""}`,
-                      inventoryItemId: picked.id,
-                      inventorySnapshot: selectedEquipment
-                        ? JSON.stringify(selectedEquipment)
-                        : "",
-                    }));
-                  }}
-                  emptyMessage="No matching equipment found in the master equipment list."
-                />
-
-                <RequestForm
-                  title="Selected Equipment Request Details"
-                  requestType="Equipment"
-                  form={equipmentRequestForm}
-                  setForm={setEquipmentRequestForm}
-                  onSave={saveEquipmentRequest}
-                  onCancel={() => {
-                    setEquipmentRequestForm(emptyEquipmentRequestForm(jobNumber));
-                    setInventorySearch("");
-                    setShowRequestForm(false);
-                  }}
-                  hideType
-                />
+                  <button
+                    type="button"
+                    onClick={createEquipmentRequest}
+                    style={{
+                      ...requestButtonStyle,
+                      background: "#c2410c",
+                      border: "1px solid #ea580c",
+                    }}
+                  >
+                    Send Equipment Request
+                  </button>
+                </div>
               </div>
             ) : null}
 
@@ -649,7 +978,8 @@ export default function JobEquipmentPage() {
                 </div>
 
                 <div style={{ fontSize: 13, color: "#d1d5db" }}>
-                  Select one or more equipment items assigned to this job, then send a pickup request to the shop.
+                  Select one or more equipment items assigned to this job, set the quantity for each,
+                  then send a pickup request.
                 </div>
 
                 <div
@@ -744,26 +1074,71 @@ export default function JobEquipmentPage() {
                   ) : (
                     filteredEquipment.map((item) => {
                       const checked = selectedEquipmentIds.includes(item.id);
+                      const maxQty = Math.max(getAvailableQty(item), 1);
+                      const qtyValue = selectedEquipmentQtys[item.id] ?? 1;
 
                       return (
-                        <label key={item.id} style={pickupRowStyle}>
-                          <input
-                            type="checkbox"
-                            checked={checked}
-                            onChange={() => toggleSelectedEquipment(item.id)}
-                          />
-                          <div style={{ display: "grid", gap: 4 }}>
-                            <div style={{ fontWeight: 700, color: "#f5f5f5" }}>
-                              {buildEquipmentTitle(item)}
+                        <div key={item.id} style={pickupItemCardStyle}>
+                          <label
+                            style={{
+                              display: "grid",
+                              gridTemplateColumns: "20px 1fr",
+                              gap: 12,
+                              alignItems: "start",
+                              cursor: "pointer",
+                            }}
+                          >
+                            <input
+                              type="checkbox"
+                              checked={checked}
+                              onChange={() => toggleSelectedEquipment(item.id)}
+                            />
+                            <div style={{ display: "grid", gap: 4 }}>
+                              <div style={{ fontWeight: 700, color: "#f5f5f5" }}>
+                                {buildEquipmentTitle(item)}
+                              </div>
+                              <div style={{ fontSize: 13, color: "#d1d5db" }}>
+                                {buildEquipmentSubtitle(item)}
+                              </div>
+                              <div style={{ fontSize: 12, color: "#a3a3a3" }}>
+                                Qty Assigned: {item.quantityAvailable ?? 0} •{" "}
+                                {buildEquipmentLocation(item)}
+                              </div>
                             </div>
-                            <div style={{ fontSize: 13, color: "#d1d5db" }}>
-                              {buildEquipmentSubtitle(item)}
+                          </label>
+
+                          {checked ? (
+                            <div
+                              style={{
+                                marginTop: 10,
+                                display: "grid",
+                                gridTemplateColumns: "160px 1fr",
+                                gap: 10,
+                                alignItems: "center",
+                              }}
+                            >
+                              <div style={{ fontSize: 13, color: "#d1d5db", fontWeight: 700 }}>
+                                Pickup Quantity
+                              </div>
+                              <input
+                                type="number"
+                                min={1}
+                                max={maxQty}
+                                value={qtyValue}
+                                onChange={(e) =>
+                                  updateSelectedEquipmentQty(
+                                    item.id,
+                                    Math.min(
+                                      Math.max(Number(e.target.value) || 1, 1),
+                                      maxQty
+                                    )
+                                  )
+                                }
+                                style={inputStyle}
+                              />
                             </div>
-                            <div style={{ fontSize: 12, color: "#a3a3a3" }}>
-                              {buildEquipmentLocation(item)}
-                            </div>
-                          </div>
-                        </label>
+                          ) : null}
+                        </div>
                       );
                     })
                   )}
@@ -944,6 +1319,17 @@ const secondaryButtonStyle: React.CSSProperties = {
   background: "#2a2a2a",
 };
 
+const smallButtonStyle: React.CSSProperties = {
+  border: "1px solid #3a3a3a",
+  borderRadius: 8,
+  padding: "8px 12px",
+  color: "white",
+  cursor: "pointer",
+  fontSize: 13,
+  fontWeight: 700,
+  background: "#2a2a2a",
+};
+
 const pickupRowStyle: React.CSSProperties = {
   display: "grid",
   gridTemplateColumns: "20px 1fr",
@@ -954,6 +1340,35 @@ const pickupRowStyle: React.CSSProperties = {
   borderRadius: 10,
   padding: 12,
   cursor: "pointer",
+};
+
+const pickupItemCardStyle: React.CSSProperties = {
+  display: "grid",
+  gap: 10,
+  background: "#141414",
+  border: "1px solid #2f2f2f",
+  borderRadius: 10,
+  padding: 12,
+};
+
+const lineCardStyle: React.CSSProperties = {
+  display: "grid",
+  gap: 12,
+  background: "#141414",
+  border: "1px solid #2f2f2f",
+  borderRadius: 10,
+  padding: 14,
+};
+
+const lineMetaStyle: React.CSSProperties = {
+  display: "grid",
+  gap: 4,
+  fontSize: 13,
+  color: "#a3a3a3",
+  background: "#101010",
+  border: "1px solid #262626",
+  borderRadius: 8,
+  padding: "10px 12px",
 };
 
 const emptyStateStyle: React.CSSProperties = {
