@@ -99,6 +99,7 @@ export type Material = {
   category: string;
   orderedQty: number;
   receivedQty: number;
+  stockQty: number;
   allocatedQty: number;
   unit: string;
   vendor: string;

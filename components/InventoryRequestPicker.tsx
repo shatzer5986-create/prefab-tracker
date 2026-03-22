@@ -33,7 +33,10 @@ export default function InventoryRequestPicker({
     if (!query) return items;
 
     return items.filter((item) =>
-      (item.searchText || `${item.title} ${item.subtitle || ""} ${item.meta || ""} ${item.badge || ""}`)
+      (
+        item.searchText ||
+        `${item.title} ${item.subtitle || ""} ${item.meta || ""} ${item.badge || ""}`
+      )
         .toLowerCase()
         .includes(query)
     );
@@ -46,7 +49,7 @@ export default function InventoryRequestPicker({
           display: "block",
           fontSize: 13,
           fontWeight: 700,
-          color: "#334155",
+          color: "#d1d5db",
         }}
       >
         {label}
@@ -80,23 +83,26 @@ export default function InventoryRequestPicker({
                     flexWrap: "wrap",
                   }}
                 >
-                  <div style={{ display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center" }}>
-                    {item.badge ? (
-                      <span style={badgeStyle(item.badge)}>{item.badge}</span>
-                    ) : null}
+                  <div
+                    style={{
+                      display: "flex",
+                      gap: 8,
+                      flexWrap: "wrap",
+                      alignItems: "center",
+                    }}
+                  >
+                    {item.badge ? <span style={badgeStyle(item.badge)}>{item.badge}</span> : null}
 
-                    <div style={{ fontSize: 15, fontWeight: 700, color: "#0f172a" }}>
+                    <div style={{ fontSize: 15, fontWeight: 700, color: "#f5f5f5" }}>
                       {item.title}
                     </div>
                   </div>
 
-                  <div style={statusPillStyle(item.status || "")}>
-                    {item.status || "-"}
-                  </div>
+                  <div style={statusPillStyle(item.status || "")}>{item.status || "-"}</div>
                 </div>
 
                 {item.subtitle ? (
-                  <div style={{ fontSize: 13, color: "#475569", lineHeight: 1.4 }}>
+                  <div style={{ fontSize: 13, color: "#d1d5db", lineHeight: 1.4 }}>
                     {item.subtitle}
                   </div>
                 ) : null}
@@ -108,7 +114,7 @@ export default function InventoryRequestPicker({
                     gap: 10,
                     flexWrap: "wrap",
                     fontSize: 13,
-                    color: "#64748b",
+                    color: "#a3a3a3",
                   }}
                 >
                   <div>{item.meta || "-"}</div>
@@ -127,9 +133,9 @@ const inputStyle: React.CSSProperties = {
   width: "100%",
   padding: "12px 14px",
   borderRadius: 10,
-  border: "1px solid #cbd5e1",
-  background: "white",
-  color: "#0f172a",
+  border: "1px solid #3a3a3a",
+  background: "#121212",
+  color: "#f5f5f5",
   fontSize: 14,
 };
 
@@ -144,19 +150,19 @@ const pickerListStyle: React.CSSProperties = {
 const pickerButtonStyle: React.CSSProperties = {
   width: "100%",
   textAlign: "left",
-  border: "1px solid #e2e8f0",
+  border: "1px solid #2f2f2f",
   borderRadius: 12,
-  background: "white",
+  background: "#141414",
   padding: 14,
   cursor: "pointer",
 };
 
 const emptyStateStyle: React.CSSProperties = {
-  border: "1px dashed #cbd5e1",
+  border: "1px dashed #3a3a3a",
   borderRadius: 12,
-  background: "#f8fafc",
+  background: "#141414",
   padding: 16,
-  color: "#64748b",
+  color: "#a3a3a3",
   fontSize: 14,
 };
 
@@ -171,8 +177,9 @@ function badgeStyle(badge: string): React.CSSProperties {
       borderRadius: 999,
       fontSize: 12,
       fontWeight: 700,
-      background: "#dbeafe",
-      color: "#1d4ed8",
+      background: "#1e3a8a",
+      color: "#dbeafe",
+      border: "1px solid #2563eb",
     };
   }
 
@@ -184,8 +191,9 @@ function badgeStyle(badge: string): React.CSSProperties {
       borderRadius: 999,
       fontSize: 12,
       fontWeight: 700,
-      background: "#dcfce7",
-      color: "#166534",
+      background: "#14532d",
+      color: "#dcfce7",
+      border: "1px solid #166534",
     };
   }
 
@@ -196,8 +204,9 @@ function badgeStyle(badge: string): React.CSSProperties {
     borderRadius: 999,
     fontSize: 12,
     fontWeight: 700,
-    background: "#f3e8ff",
-    color: "#7e22ce",
+    background: "#581c87",
+    color: "#f3e8ff",
+    border: "1px solid #7e22ce",
   };
 }
 
@@ -210,8 +219,9 @@ function statusPillStyle(status: string): React.CSSProperties {
       borderRadius: 999,
       fontSize: 12,
       fontWeight: 700,
-      background: "#dcfce7",
-      color: "#166534",
+      background: "#14532d",
+      color: "#dcfce7",
+      border: "1px solid #166534",
     };
   }
 
@@ -221,8 +231,9 @@ function statusPillStyle(status: string): React.CSSProperties {
       borderRadius: 999,
       fontSize: 12,
       fontWeight: 700,
-      background: "#fee2e2",
-      color: "#991b1b",
+      background: "#7f1d1d",
+      color: "#fecaca",
+      border: "1px solid #991b1b",
     };
   }
 
@@ -231,7 +242,8 @@ function statusPillStyle(status: string): React.CSSProperties {
     borderRadius: 999,
     fontSize: 12,
     fontWeight: 700,
-    background: "#e2e8f0",
-    color: "#334155",
+    background: "#2a2a2a",
+    color: "#d1d5db",
+    border: "1px solid #3a3a3a",
   };
 }

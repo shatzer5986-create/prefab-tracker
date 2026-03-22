@@ -19,23 +19,6 @@ model Job {
   @@map("jobs")
 }
 
-model JobStock {
-  id           Int      @id @default(autoincrement())
-  jobNumber    String   @map("job_number")
-  materialName String   @map("material_name")
-  description  String?
-  unit         String
-  quantity     Decimal  @default(0) @db.Decimal(12, 2)
-  vendor       String?
-  poNumber     String?  @map("po_number")
-  location     String?
-  status       String?  @default("available")
-  createdAt    DateTime @default(now()) @map("created_at") @db.Timestamp(6)
-  updatedAt    DateTime @updatedAt @map("updated_at") @db.Timestamp(6)
-
-  @@map("job_stock")
-}
-
 model MaterialCatalog {
   id            Int      @id @default(autoincrement())
   name          String   @unique
@@ -57,6 +40,7 @@ model Material {
   category     String
   orderedQty   Int      @default(0) @map("ordered_qty")
   receivedQty  Int      @default(0) @map("received_qty")
+  stockQty     Int      @default(0) @map("stock_qty")
   allocatedQty Int      @default(0) @map("allocated_qty")
   unit         String
   vendor       String
@@ -93,48 +77,48 @@ model Tool {
 }
 
 model Asset {
-  id                Int      @id @default(autoincrement())
-  assetType         String   @map("asset_type")
-  quantityAvailable Int      @default(1) @map("quantity_available")
-  assetNumber       String?  @map("asset_number")
-  jobNumber         String?  @map("job_number")
-  assignedTo        String?  @map("assigned_to")
-  assignmentType    String   @default("Job") @map("assignment_type")
-  toolRoomLocation  String?  @map("tool_room_location")
-  year              String?
-  manufacturer      String?
-  model             String?
-  modelNumber       String?  @map("model_number")
-  description       String?
-  category          String?
-  itemNumber        String?  @map("item_number")
-  barcode           String?
-  serialNumber      String?  @map("serial_number")
-  licensePlate      String?  @map("license_plate")
-  vinSerial         String?  @map("vin_serial")
-  engineSerialNumber String? @map("engine_serial_number")
-  ein               String?
-  gvwr              String?
-  driverProject     String?  @map("driver_project")
-  indexNumber       String?  @map("index_number")
-  purchaseCost      String?  @map("purchase_cost")
-  purchaseDate      String?  @map("purchase_date")
-  tier              String?
-  lowUse            String?  @map("low_use")
-  samsara           String?
-  powered           String?
-  hourMeterStart2026 String? @map("hour_meter_start_2026")
-  hourMeterUpdate   String?  @map("hour_meter_update")
-  dateOfUpdate      String?  @map("date_of_update")
-  hourMeterEnd2026  String?  @map("hour_meter_end_2026")
-  currentYtd        String?  @map("current_ytd")
-  lessThan200Hours  String?  @map("less_than_200_hours")
-  transferDateIn    String?  @map("transfer_date_in")
-  transferDateOut   String?  @map("transfer_date_out")
-  status            String   @default("Working")
-  notes             String?
-  createdAt         DateTime @default(now()) @map("created_at") @db.Timestamp(6)
-  updatedAt         DateTime @updatedAt @map("updated_at") @db.Timestamp(6)
+  id                 Int      @id @default(autoincrement())
+  assetType          String   @map("asset_type")
+  quantityAvailable  Int      @default(1) @map("quantity_available")
+  assetNumber        String?  @map("asset_number")
+  jobNumber          String?  @map("job_number")
+  assignedTo         String?  @map("assigned_to")
+  assignmentType     String   @default("Job") @map("assignment_type")
+  toolRoomLocation   String?  @map("tool_room_location")
+  year               String?
+  manufacturer       String?
+  model              String?
+  modelNumber        String?  @map("model_number")
+  description        String?
+  category           String?
+  itemNumber         String?  @map("item_number")
+  barcode            String?
+  serialNumber       String?  @map("serial_number")
+  licensePlate       String?  @map("license_plate")
+  vinSerial          String?  @map("vin_serial")
+  engineSerialNumber String?  @map("engine_serial_number")
+  ein                String?
+  gvwr               String?
+  driverProject      String?  @map("driver_project")
+  indexNumber        String?  @map("index_number")
+  purchaseCost       String?  @map("purchase_cost")
+  purchaseDate       String?  @map("purchase_date")
+  tier               String?
+  lowUse             String?  @map("low_use")
+  samsara            String?
+  powered            String?
+  hourMeterStart2026 String?  @map("hour_meter_start_2026")
+  hourMeterUpdate    String?  @map("hour_meter_update")
+  dateOfUpdate       String?  @map("date_of_update")
+  hourMeterEnd2026   String?  @map("hour_meter_end_2026")
+  currentYtd         String?  @map("current_ytd")
+  lessThan200Hours   String?  @map("less_than_200_hours")
+  transferDateIn     String?  @map("transfer_date_in")
+  transferDateOut    String?  @map("transfer_date_out")
+  status             String   @default("Working")
+  notes              String?
+  createdAt          DateTime @default(now()) @map("created_at") @db.Timestamp(6)
+  updatedAt          DateTime @updatedAt @map("updated_at") @db.Timestamp(6)
 
   @@map("assets")
 }

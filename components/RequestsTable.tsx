@@ -30,13 +30,13 @@ export default function RequestsTable({
           <div key={row.id} style={cardStyle}>
             <div style={cardHeaderStyle}>
               <div style={{ display: "grid", gap: 4 }}>
-                <div style={{ fontSize: 18, fontWeight: 700 }}>
+                <div style={{ fontSize: 18, fontWeight: 700, color: "#f5f5f5" }}>
                   {displayLines.length === 1
                     ? displayLines[0].itemName || "Request"
                     : `${displayLines.length} line items`}
                 </div>
 
-                <div style={{ fontSize: 14, color: "#475569" }}>
+                <div style={{ fontSize: 14, color: "#d1d5db" }}>
                   {buildFlowLabel(row)}
                 </div>
               </div>
@@ -87,14 +87,14 @@ export default function RequestsTable({
                 </button>
                 <button
                   type="button"
-                  style={{ ...smallActionButtonStyle, background: "#166534" }}
+                  style={{ ...smallActionButtonStyle, background: "#166534", border: "1px solid #15803d" }}
                   onClick={() => onUpdateStatus(row.id, "Complete")}
                 >
                   Complete
                 </button>
                 <button
                   type="button"
-                  style={{ ...smallActionButtonStyle, background: "#7f1d1d" }}
+                  style={{ ...smallActionButtonStyle, background: "#7f1d1d", border: "1px solid #991b1b" }}
                   onClick={() => onUpdateStatus(row.id, "Rejected")}
                 >
                   Reject
@@ -153,9 +153,11 @@ function RequestLineCard({ line }: { line: JobRequestLine }) {
   return (
     <div style={lineCardStyle}>
       <div style={{ display: "grid", gap: 4 }}>
-        <div style={{ fontWeight: 700 }}>{line.itemName || "Item"}</div>
+        <div style={{ fontWeight: 700, color: "#f5f5f5" }}>
+          {line.itemName || "Item"}
+        </div>
 
-        <div style={{ fontSize: 14, color: "#475569" }}>
+        <div style={{ fontSize: 14, color: "#d1d5db" }}>
           {[
             line.type,
             line.category,
@@ -168,7 +170,7 @@ function RequestLineCard({ line }: { line: JobRequestLine }) {
         </div>
 
         {!!line.description && (
-          <div style={{ fontSize: 13, color: "#64748b" }}>{line.description}</div>
+          <div style={{ fontSize: 13, color: "#a3a3a3" }}>{line.description}</div>
         )}
       </div>
     </div>
@@ -178,8 +180,8 @@ function RequestLineCard({ line }: { line: JobRequestLine }) {
 function Detail({ label, value }: { label: string; value: string }) {
   return (
     <div style={detailCardStyle}>
-      <div style={{ fontSize: 12, color: "#64748b", marginBottom: 4 }}>{label}</div>
-      <div style={{ fontSize: 14, fontWeight: 700 }}>{value || "-"}</div>
+      <div style={{ fontSize: 12, color: "#a3a3a3", marginBottom: 4 }}>{label}</div>
+      <div style={{ fontSize: 14, fontWeight: 700, color: "#f5f5f5" }}>{value || "-"}</div>
     </div>
   );
 }
@@ -192,34 +194,46 @@ function statusBadgeStyle(status: RequestStatus): React.CSSProperties {
     fontWeight: 700,
     background:
       status === "Complete"
+        ? "#14532d"
+        : status === "Rejected"
+        ? "#7f1d1d"
+        : status === "Approved"
+        ? "#1e3a8a"
+        : status === "Ordered"
+        ? "#78350f"
+        : status === "In Progress"
+        ? "#312e81"
+        : "#2a2a2a",
+    color:
+      status === "Complete"
         ? "#dcfce7"
         : status === "Rejected"
-        ? "#fee2e2"
+        ? "#fecaca"
         : status === "Approved"
         ? "#dbeafe"
         : status === "Ordered"
-        ? "#fef3c7"
+        ? "#fde68a"
         : status === "In Progress"
         ? "#e0e7ff"
-        : "#e2e8f0",
-    color:
+        : "#d1d5db",
+    border:
       status === "Complete"
-        ? "#166534"
+        ? "1px solid #166534"
         : status === "Rejected"
-        ? "#991b1b"
+        ? "1px solid #991b1b"
         : status === "Approved"
-        ? "#1d4ed8"
+        ? "1px solid #2563eb"
         : status === "Ordered"
-        ? "#92400e"
+        ? "1px solid #92400e"
         : status === "In Progress"
-        ? "#4338ca"
-        : "#334155",
+        ? "1px solid #4338ca"
+        : "1px solid #3a3a3a",
   };
 }
 
 const cardStyle: React.CSSProperties = {
-  background: "white",
-  border: "1px solid #dbe3ec",
+  background: "#1a1a1a",
+  border: "1px solid #2f2f2f",
   borderRadius: 12,
   padding: 16,
   display: "grid",
@@ -241,40 +255,40 @@ const detailsGridStyle: React.CSSProperties = {
 };
 
 const detailCardStyle: React.CSSProperties = {
-  background: "#f8fafc",
-  border: "1px solid #e2e8f0",
+  background: "#141414",
+  border: "1px solid #2f2f2f",
   borderRadius: 10,
   padding: 10,
 };
 
 const lineCardStyle: React.CSSProperties = {
-  background: "#f8fafc",
-  border: "1px solid #e2e8f0",
+  background: "#141414",
+  border: "1px solid #2f2f2f",
   borderRadius: 10,
   padding: "10px 12px",
 };
 
 const noteBoxStyle: React.CSSProperties = {
-  background: "#f8fafc",
-  border: "1px solid #e2e8f0",
+  background: "#141414",
+  border: "1px solid #2f2f2f",
   borderRadius: 10,
   padding: "10px 12px",
   fontSize: 14,
-  color: "#334155",
+  color: "#d1d5db",
 };
 
 const emptyStateStyle: React.CSSProperties = {
-  background: "white",
-  border: "1px solid #e2e8f0",
+  background: "#1a1a1a",
+  border: "1px solid #2f2f2f",
   borderRadius: 14,
   padding: 18,
-  color: "#64748b",
+  color: "#a3a3a3",
 };
 
 const smallActionButtonStyle: React.CSSProperties = {
-  background: "#0f172a",
+  background: "#2a2a2a",
   color: "white",
-  border: "none",
+  border: "1px solid #3a3a3a",
   borderRadius: 8,
   padding: "8px 12px",
   cursor: "pointer",

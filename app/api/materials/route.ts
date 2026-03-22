@@ -26,6 +26,7 @@ export async function POST(req: NextRequest) {
     const category = String(body.category ?? "").trim();
     const orderedQty = Number(body.orderedQty ?? 0) || 0;
     const receivedQty = Number(body.receivedQty ?? 0) || 0;
+    const stockQty = Number(body.stockQty ?? 0) || 0;
     const allocatedQty = Number(body.allocatedQty ?? 0) || 0;
     const unit = String(body.unit ?? "").trim() || "ea";
     const vendor = String(body.vendor ?? "").trim();
@@ -47,6 +48,7 @@ export async function POST(req: NextRequest) {
         category,
         orderedQty,
         receivedQty,
+        stockQty,
         allocatedQty,
         unit,
         vendor,

@@ -8,6 +8,7 @@ type MaterialsTableProps = {
   onEdit: (material: Material) => void;
   onDelete: (id: number) => void;
   onUpdateReceivedQty: (id: number, qty: number) => void;
+  onUpdateStockQty: (id: number, qty: number) => void;
 };
 
 export default function MaterialsTable({
@@ -15,6 +16,7 @@ export default function MaterialsTable({
   onEdit,
   onDelete,
   onUpdateReceivedQty,
+  onUpdateStockQty,
 }: MaterialsTableProps) {
   return (
     <TableWrapper>
@@ -26,8 +28,10 @@ export default function MaterialsTable({
             <Th>Category</Th>
             <Th>Ordered</Th>
             <Th>Received</Th>
+            <Th>Stock</Th>
             <Th>Allocated</Th>
-            <Th>Remaining</Th>
+            <Th>Remaining to Receive</Th>
+            <Th>Available Stock</Th>
             <Th>Unit</Th>
             <Th>Vendor</Th>
             <Th>Status</Th>
@@ -38,8 +42,13 @@ export default function MaterialsTable({
         </thead>
         <tbody>
           {materials.map((material) => {
-            const remaining = Math.max(
+            const remainingToReceive = Math.max(
               Number(material.orderedQty || 0) - Number(material.receivedQty || 0),
+              0
+            );
+
+            const availableStock = Math.max(
+              Number(material.stockQty || 0) - Number(material.allocatedQty || 0),
               0
             );
 
@@ -49,6 +58,7 @@ export default function MaterialsTable({
                 <Td>{material.item}</Td>
                 <Td>{material.category}</Td>
                 <Td>{material.orderedQty}</Td>
+
                 <Td>
                   <input
                     type="number"
@@ -58,16 +68,25 @@ export default function MaterialsTable({
                     onChange={(e) =>
                       onUpdateReceivedQty(material.id, Number(e.target.value))
                     }
-                    style={{
-                      width: 70,
-                      padding: "4px 6px",
-                      borderRadius: 6,
-                      border: "1px solid #ccc",
-                    }}
+                    style={qtyInputStyle}
                   />
                 </Td>
+
+                <Td>
+                  <input
+                    type="number"
+                    min={0}
+                    value={material.stockQty}
+                    onChange={(e) =>
+                      onUpdateStockQty(material.id, Number(e.target.value))
+                    }
+                    style={qtyInputStyle}
+                  />
+                </Td>
+
                 <Td>{material.allocatedQty}</Td>
-                <Td>{remaining}</Td>
+                <Td>{remainingToReceive}</Td>
+                <Td>{availableStock}</Td>
                 <Td>{material.unit}</Td>
                 <Td>{material.vendor}</Td>
                 <Td>{material.status}</Td>
@@ -91,3 +110,12 @@ export default function MaterialsTable({
     </TableWrapper>
   );
 }
+
+const qtyInputStyle: React.CSSProperties = {
+  width: 80,
+  padding: "4px 6px",
+  borderRadius: 6,
+  border: "1px solid #3a3a3a",
+  background: "#121212",
+  color: "#f5f5f5",
+};

@@ -89,6 +89,7 @@ function emptyEquipmentRequestForm(jobNumber: string): RequestFormState {
     lines: [],
   };
 }
+
 function buildEquipmentLocation(item: EquipmentItem) {
   if (item.assignmentType === "Tool Room") {
     return item.toolRoomLocation
@@ -114,8 +115,8 @@ function buildEquipmentLocation(item: EquipmentItem) {
 
 function buildEquipmentTitle(item: EquipmentItem) {
   const assetType = safeString(item.assetType);
-  const assetNumber = safeString((item as any).assetNumber);
-  const year = safeString((item as any).year);
+  const assetNumber = safeString(item.assetNumber);
+  const year = safeString(item.year);
   const manufacturer = safeString(item.manufacturer);
   const model = safeString(item.model);
   const description = safeString(item.description);
@@ -138,9 +139,9 @@ function buildEquipmentSubtitle(item: EquipmentItem) {
   const category = safeString(item.category);
   const itemNumber = safeString(item.itemNumber);
   const barcode = safeString(item.barcode);
-  const serialNumber = safeString((item as any).serialNumber);
-  const licensePlate = safeString((item as any).licensePlate);
-  const vinSerial = safeString((item as any).vinSerial);
+  const serialNumber = safeString(item.serialNumber);
+  const licensePlate = safeString(item.licensePlate);
+  const vinSerial = safeString(item.vinSerial);
   const status = safeString(item.status);
 
   return [
@@ -171,8 +172,8 @@ export default function JobEquipmentPage() {
 
   const [inventorySearch, setInventorySearch] = useState("");
   const [equipmentRequestForm, setEquipmentRequestForm] = useState<RequestFormState>(() =>
-  emptyEquipmentRequestForm(jobNumber)
-);
+    emptyEquipmentRequestForm(jobNumber)
+  );
 
   const [selectedEquipmentIds, setSelectedEquipmentIds] = useState<number[]>([]);
   const [pickupRequestedBy, setPickupRequestedBy] = useState("");
@@ -282,11 +283,11 @@ export default function JobEquipmentPage() {
           item.barcode,
           item.manufacturer,
           item.model,
-          (item as any).serialNumber,
-          (item as any).licensePlate,
-          (item as any).vinSerial,
-          (item as any).assetNumber,
-          (item as any).year,
+          item.serialNumber,
+          item.licensePlate,
+          item.vinSerial,
+          item.assetNumber,
+          item.year,
           item.jobNumber,
           item.assignedTo,
           item.toolRoomLocation,
@@ -348,23 +349,6 @@ export default function JobEquipmentPage() {
     );
   }
 
-  function addSubmittedNotification(request: JobRequest, title = "Request submitted") {
-    const newNotification: AppNotification = {
-      id: Date.now() + Math.floor(Math.random() * 1000),
-      jobNumber: request.jobNumber,
-      requestId: request.id,
-      type: "Request Submitted",
-      title,
-      message:
-        (request.lines || []).map((line) => line.itemName).join(", ") ||
-        "Items requested.",
-      createdAt: new Date().toISOString(),
-      isRead: false,
-    };
-
-    setNotifications((prev) => [newNotification, ...prev]);
-  }
-
   function saveEquipmentRequest() {
     const hasMinimumData =
       equipmentRequestForm.itemName.trim() ||
@@ -408,8 +392,34 @@ export default function JobEquipmentPage() {
       assignedToJobAt: "",
     };
 
-    setRequests((prev) => [newRequest, ...prev]);
-    addSubmittedNotification(newRequest, "Equipment request submitted");
+    const latest = loadStoredAppData() || fallbackData;
+    const nextRequests = [newRequest, ...(latest.requests || [])];
+
+    const newNotification: AppNotification = {
+      id: Date.now() + Math.floor(Math.random() * 1000),
+      jobNumber: newRequest.jobNumber,
+      requestId: newRequest.id,
+      type: "Request Submitted",
+      title: "Equipment request submitted",
+      message:
+        (newRequest.lines || []).map((line) => line.itemName).join(", ") ||
+        "Items requested.",
+      createdAt: new Date().toISOString(),
+      isRead: false,
+    };
+
+    const nextNotifications = [newNotification, ...(latest.notifications || [])];
+
+    const updatedData: AppData = {
+      ...latest,
+      requests: nextRequests,
+      notifications: nextNotifications,
+    };
+
+    localStorage.setItem(STORAGE_KEY, JSON.stringify(updatedData));
+
+    setRequests(nextRequests);
+    setNotifications(nextNotifications);
     setEquipmentRequestForm(emptyEquipmentRequestForm(jobNumber));
     setInventorySearch("");
     setShowRequestForm(false);
@@ -472,8 +482,34 @@ export default function JobEquipmentPage() {
       assignedToJobAt: "",
     };
 
-    setRequests((prev) => [newRequest, ...prev]);
-    addSubmittedNotification(newRequest, "Equipment pickup request submitted");
+    const latest = loadStoredAppData() || fallbackData;
+    const nextRequests = [newRequest, ...(latest.requests || [])];
+
+    const newNotification: AppNotification = {
+      id: Date.now() + Math.floor(Math.random() * 1000),
+      jobNumber: newRequest.jobNumber,
+      requestId: newRequest.id,
+      type: "Request Submitted",
+      title: "Equipment pickup request submitted",
+      message:
+        (newRequest.lines || []).map((line) => line.itemName).join(", ") ||
+        "Items requested.",
+      createdAt: new Date().toISOString(),
+      isRead: false,
+    };
+
+    const nextNotifications = [newNotification, ...(latest.notifications || [])];
+
+    const updatedData: AppData = {
+      ...latest,
+      requests: nextRequests,
+      notifications: nextNotifications,
+    };
+
+    localStorage.setItem(STORAGE_KEY, JSON.stringify(updatedData));
+
+    setRequests(nextRequests);
+    setNotifications(nextNotifications);
 
     setSelectedEquipmentIds([]);
     setPickupRequestedBy("");

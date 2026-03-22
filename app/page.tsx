@@ -6,6 +6,7 @@ import AppSidebar from "@/components/AppSidebar";
 import Section from "@/components/Section";
 import StatCard from "@/components/StatCard";
 import MaterialForm from "@/components/MaterialForm";
+import MaterialsTable from "@/components/MaterialsTable";
 import InventoryLogTable from "@/components/InventoryLogTable";
 import RequestsBoardTable from "@/components/RequestsBoardTable";
 import NotificationsTable from "@/components/NotificationsTable";
@@ -86,8 +87,10 @@ function makeTicketNumber(type: "Pick" | "Transfer", existing: ShopTicket[]) {
   return `${prefix}-${String(count).padStart(4, "0")}`;
 }
 
-function ticketDateValue(ticket: ShopTicket) {
-  return ticket.requestDate;
+function deriveMaterialStatus(receivedQty: number, orderedQty: number): MaterialStatus {
+  if (receivedQty <= 0) return "Ordered";
+  if (orderedQty > 0 && receivedQty < orderedQty) return "Partial";
+  return "Received";
 }
 
 export default function Home() {
@@ -101,6 +104,7 @@ export default function Home() {
   const [notifications, setNotifications] = useState<AppNotification[]>([]);
   const [tickets, setTickets] = useState<ShopTicket[]>([]);
   const [jobOptions, setJobOptions] = useState<string[]>([]);
+  const [editingMaterialId, setEditingMaterialId] = useState<number | null>(null);
 
   const [materialForm, setMaterialForm] = useState({
     job: "",
@@ -108,11 +112,12 @@ export default function Home() {
     category: "",
     orderedQty: "",
     receivedQty: "",
+    stockQty: "",
     allocatedQty: "",
     unit: "ea",
     vendor: "",
     status: "Ordered" as MaterialStatus,
-    location: "",
+    location: "Shop",
     poNumber: "",
   });
 
@@ -313,8 +318,8 @@ export default function Home() {
         notificationTypeMap[status],
         titleMap[status],
         `${request.lines?.[0]?.type || "Request"} request for ${
-  request.lines?.map((line) => line.itemName).filter(Boolean).join(", ") || "item"
-} on ${request.jobNumber} marked ${status}.`
+          request.lines?.map((line) => line.itemName).filter(Boolean).join(", ") || "item"
+        } on ${request.jobNumber} marked ${status}.`
       );
     }
   }
@@ -334,13 +339,13 @@ export default function Home() {
     const ticketNumber = makeTicketNumber("Pick", existingTickets);
 
     const itemType: TicketItemType =
-  request.lines?.[0]?.type === "Tool"
-    ? "Tool"
-    : request.lines?.[0]?.type === "Material"
-    ? "Material"
-    : request.lines?.[0]?.type === "Prefab"
-    ? "Prefab"
-    : "Equipment";
+      request.lines?.[0]?.type === "Tool"
+        ? "Tool"
+        : request.lines?.[0]?.type === "Material"
+        ? "Material"
+        : request.lines?.[0]?.type === "Prefab"
+        ? "Prefab"
+        : "Equipment";
 
     const newTicket: ShopTicket = {
       id: Date.now(),
@@ -355,18 +360,18 @@ export default function Home() {
       notes: request.notes || "",
       sourceRequestId: request.id,
       lines: [
-  {
-    id: Date.now() + 1,
-    itemType,
-    itemId: request.lines?.[0]?.inventoryItemId ?? null,
-    itemName: request.lines?.[0]?.itemName || "",
-    qty: Number(request.lines?.[0]?.quantity) || 1,
-    unit: request.lines?.[0]?.unit || "ea",
-    fromLocation: "",
-    toLocation: request.jobNumber,
-    notes: request.lines?.[0]?.description || "",
-  },
-],
+        {
+          id: Date.now() + 1,
+          itemType,
+          itemId: request.lines?.[0]?.inventoryItemId ?? null,
+          itemName: request.lines?.[0]?.itemName || "",
+          qty: Number(request.lines?.[0]?.quantity) || 1,
+          unit: request.lines?.[0]?.unit || "ea",
+          fromLocation: "",
+          toLocation: request.jobNumber,
+          notes: request.lines?.[0]?.description || "",
+        },
+      ],
     };
 
     const nextRequests = (latest.requests || []).map((item) =>
@@ -396,13 +401,13 @@ export default function Home() {
       })
     );
 
-   addNotification(
-  request.jobNumber,
-  request.id,
-  "Request In Progress",
-  "Pick ticket created",
-  `${newTicket.ticketNumber} created for ${request.lines?.[0]?.itemName || "item"}.`
-);
+    addNotification(
+      request.jobNumber,
+      request.id,
+      "Request In Progress",
+      "Pick ticket created",
+      `${newTicket.ticketNumber} created for ${request.lines?.[0]?.itemName || "item"}.`
+    );
 
     window.location.href = "/pick-tickets";
   }
@@ -422,31 +427,53 @@ export default function Home() {
   async function addOrUpdateMaterial() {
     if (!materialForm.job.trim() || !materialForm.item.trim()) return;
 
+    const receivedQty = Number(materialForm.receivedQty) || 0;
+    const orderedQty = Number(materialForm.orderedQty) || 0;
+
     const payload = {
       job: materialForm.job.trim(),
       item: materialForm.item.trim(),
       category: materialForm.category.trim(),
-      orderedQty: Number(materialForm.orderedQty) || 0,
-      receivedQty: Number(materialForm.receivedQty) || 0,
+      orderedQty,
+      receivedQty,
+      stockQty:
+        materialForm.stockQty !== ""
+          ? Number(materialForm.stockQty) || 0
+          : receivedQty,
       allocatedQty: Number(materialForm.allocatedQty) || 0,
       unit: materialForm.unit.trim() || "ea",
       vendor: materialForm.vendor.trim(),
-      status: materialForm.status,
-      location: materialForm.location.trim(),
+      status: materialForm.status || deriveMaterialStatus(receivedQty, orderedQty),
+      location: materialForm.location.trim() || "Shop",
       poNumber: materialForm.poNumber.trim(),
     };
 
     try {
-      const response = await fetch("/api/materials", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(payload),
-      });
+      if (editingMaterialId !== null) {
+        const response = await fetch(`/api/materials/${editingMaterialId}`, {
+          method: "PUT",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(payload),
+        });
 
-      if (!response.ok) throw new Error("Failed to create material");
-      const newMaterial = await response.json();
+        if (!response.ok) throw new Error("Failed to update material");
+        const updatedMaterial = await response.json();
 
-      setMaterials((prev) => [newMaterial, ...prev]);
+        setMaterials((prev) =>
+          prev.map((item) => (item.id === editingMaterialId ? updatedMaterial : item))
+        );
+      } else {
+        const response = await fetch("/api/materials", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(payload),
+        });
+
+        if (!response.ok) throw new Error("Failed to create material");
+        const newMaterial = await response.json();
+
+        setMaterials((prev) => [newMaterial, ...prev]);
+      }
 
       setMaterialForm({
         job: "",
@@ -454,16 +481,132 @@ export default function Home() {
         category: "",
         orderedQty: "",
         receivedQty: "",
+        stockQty: "",
         allocatedQty: "",
         unit: "ea",
         vendor: "",
         status: "Ordered",
-        location: "",
+        location: "Shop",
         poNumber: "",
       });
+      setEditingMaterialId(null);
     } catch (error) {
       console.error("Saving material failed:", error);
       alert("Failed to save material.");
+    }
+  }
+
+  function handleEditMaterial(material: Material) {
+    setMaterialForm({
+      job: material.job || "",
+      item: material.item || "",
+      category: material.category || "",
+      orderedQty: String(material.orderedQty ?? ""),
+      receivedQty: String(material.receivedQty ?? ""),
+      stockQty: String(material.stockQty ?? ""),
+      allocatedQty: String(material.allocatedQty ?? ""),
+      unit: material.unit || "ea",
+      vendor: material.vendor || "",
+      status: material.status || "Ordered",
+      location: material.location || "Shop",
+      poNumber: material.poNumber || "",
+    });
+
+    setEditingMaterialId(material.id);
+    window.scrollTo({ top: 0, behavior: "smooth" });
+  }
+
+  async function handleDeleteMaterial(id: number) {
+    const confirmed = window.confirm("Delete this material row?");
+    if (!confirmed) return;
+
+    try {
+      const response = await fetch(`/api/materials/${id}`, {
+        method: "DELETE",
+      });
+
+      if (!response.ok) throw new Error("Failed to delete material");
+
+      setMaterials((prev) => prev.filter((item) => item.id !== id));
+
+      if (editingMaterialId === id) {
+        setMaterialForm({
+          job: "",
+          item: "",
+          category: "",
+          orderedQty: "",
+          receivedQty: "",
+          stockQty: "",
+          allocatedQty: "",
+          unit: "ea",
+          vendor: "",
+          status: "Ordered",
+          location: "Shop",
+          poNumber: "",
+        });
+        setEditingMaterialId(null);
+      }
+    } catch (error) {
+      console.error("Deleting material failed:", error);
+      alert("Failed to delete material.");
+    }
+  }
+
+  async function handleUpdateMaterialReceivedQty(id: number, qty: number) {
+    const existing = materials.find((item) => item.id === id);
+    if (!existing) return;
+
+    const nextQty = Math.max(0, qty);
+    const nextStatus = deriveMaterialStatus(nextQty, Number(existing.orderedQty || 0));
+
+    try {
+      const response = await fetch(`/api/materials/${id}`, {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          ...existing,
+          receivedQty: nextQty,
+          status: nextStatus,
+        }),
+      });
+
+      if (!response.ok) throw new Error("Failed to update received qty");
+      const updatedMaterial = await response.json();
+
+      setMaterials((prev) =>
+        prev.map((item) => (item.id === id ? updatedMaterial : item))
+      );
+    } catch (error) {
+      console.error("Updating received qty failed:", error);
+      alert("Failed to update received quantity.");
+    }
+  }
+
+  async function handleUpdateMaterialStockQty(id: number, qty: number) {
+    const existing = materials.find((item) => item.id === id);
+    if (!existing) return;
+
+    const nextQty = Math.max(0, qty);
+
+    try {
+      const response = await fetch(`/api/materials/${id}`, {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          ...existing,
+          stockQty: nextQty,
+        }),
+      });
+
+      if (!response.ok) throw new Error("Failed to update stock qty");
+      const updatedMaterial = await response.json();
+
+      setMaterials((prev) =>
+        prev.map((item) => (item.id === id ? updatedMaterial : item))
+      );
+    } catch (error) {
+      console.error("Updating stock qty failed:", error);
+      alert("Failed to update stock quantity.");
     }
   }
 
@@ -506,18 +649,18 @@ export default function Home() {
         <AppSidebar active="dashboard" />
 
         <div style={mainStyle}>
-         <div style={topBarStyle}>
-  <div>
-    <h1 style={{ fontSize: 30, margin: 0 }}>SiteOps</h1>
-    <p style={{ color: "#d1d5db", margin: "6px 0 0 0" }}>
-      Construction Operations & Tracking
-    </p>
-  </div>
+          <div style={topBarStyle}>
+            <div>
+              <h1 style={{ fontSize: 30, margin: 0 }}>SiteOps</h1>
+              <p style={{ color: "#d1d5db", margin: "6px 0 0 0" }}>
+                Construction Operations & Tracking
+              </p>
+            </div>
 
-  <button onClick={exportData} style={actionButtonStyle}>
-    Export Data
-  </button>
-</div>
+            <button onClick={exportData} style={actionButtonStyle}>
+              Export Data
+            </button>
+          </div>
 
           <div
             style={{
@@ -557,23 +700,35 @@ export default function Home() {
               materialForm={materialForm}
               setMaterialForm={setMaterialForm}
               jobOptions={jobOptions}
-              editingMaterialId={null}
+              editingMaterialId={editingMaterialId}
               onSave={addOrUpdateMaterial}
-              onCancel={() =>
+              onCancel={() => {
                 setMaterialForm({
                   job: "",
                   item: "",
                   category: "",
                   orderedQty: "",
                   receivedQty: "",
+                  stockQty: "",
                   allocatedQty: "",
                   unit: "ea",
                   vendor: "",
                   status: "Ordered",
-                  location: "",
+                  location: "Shop",
                   poNumber: "",
-                })
-              }
+                });
+                setEditingMaterialId(null);
+              }}
+            />
+          </Section>
+
+          <Section title="Materials" collapsible defaultOpen={false}>
+            <MaterialsTable
+              materials={materials}
+              onEdit={handleEditMaterial}
+              onDelete={handleDeleteMaterial}
+              onUpdateReceivedQty={handleUpdateMaterialReceivedQty}
+              onUpdateStockQty={handleUpdateMaterialStockQty}
             />
           </Section>
 

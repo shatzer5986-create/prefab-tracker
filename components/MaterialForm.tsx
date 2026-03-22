@@ -4,6 +4,21 @@ import InputBlock, { inputStyle } from "./InputBlock";
 import { buttonStyle, secondaryButtonStyle, formGrid } from "./TableBits";
 import { Material, MaterialStatus } from "@/types";
 
+type MaterialFormState = {
+  job: string;
+  item: string;
+  category: string;
+  orderedQty: string;
+  receivedQty: string;
+  stockQty: string;
+  allocatedQty: string;
+  unit: string;
+  vendor: string;
+  status: MaterialStatus;
+  location: string;
+  poNumber: string;
+};
+
 export default function MaterialForm({
   materials = [],
   materialForm,
@@ -14,34 +29,8 @@ export default function MaterialForm({
   onCancel,
 }: {
   materials?: Material[];
-  materialForm: {
-    job: string;
-    item: string;
-    category: string;
-    orderedQty: string;
-    receivedQty: string;
-    allocatedQty: string;
-    unit: string;
-    vendor: string;
-    status: MaterialStatus;
-    location: string;
-    poNumber: string;
-  };
-  setMaterialForm: React.Dispatch<
-    React.SetStateAction<{
-      job: string;
-      item: string;
-      category: string;
-      orderedQty: string;
-      receivedQty: string;
-      allocatedQty: string;
-      unit: string;
-      vendor: string;
-      status: MaterialStatus;
-      location: string;
-      poNumber: string;
-    }>
-  >;
+  materialForm: MaterialFormState;
+  setMaterialForm: React.Dispatch<React.SetStateAction<MaterialFormState>>;
   jobOptions: string[];
   editingMaterialId: number | null;
   onSave: () => void;
@@ -165,6 +154,22 @@ export default function MaterialForm({
           />
         </InputBlock>
 
+        <InputBlock label="Stock Qty">
+          <input
+            type="number"
+            min="0"
+            step="any"
+            value={materialForm.stockQty}
+            onChange={(e) =>
+              setMaterialForm((prev) => ({
+                ...prev,
+                stockQty: e.target.value,
+              }))
+            }
+            style={inputStyle}
+          />
+        </InputBlock>
+
         <InputBlock label="Allocated Qty">
           <input
             type="number"
@@ -263,6 +268,19 @@ export default function MaterialForm({
             style={inputStyle}
           />
         </InputBlock>
+      </div>
+
+      <div
+        style={{
+          fontSize: 12,
+          color: "#a3a3a3",
+          background: "#141414",
+          border: "1px solid #2f2f2f",
+          borderRadius: 10,
+          padding: "10px 12px",
+        }}
+      >
+        Received Qty = what came from the vendor. Stock Qty = what is physically on hand at this location.
       </div>
 
       <div style={{ display: "flex", gap: 10, flexWrap: "wrap" }}>

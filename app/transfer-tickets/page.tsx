@@ -50,6 +50,11 @@ function safeString(value: unknown) {
   return typeof value === "string" ? value.trim() : "";
 }
 
+function safeNumber(value: unknown, fallback = 0) {
+  const n = Number(value);
+  return Number.isFinite(n) ? n : fallback;
+}
+
 function todayIsoDate() {
   return new Date().toISOString().slice(0, 10);
 }
@@ -230,6 +235,18 @@ function emptyLineForm() {
   };
 }
 
+function buildMaterialTargetKey(material: Material, location: string) {
+  return [
+    safeString(material.job).toLowerCase(),
+    safeString(material.item).toLowerCase(),
+    safeString(material.category).toLowerCase(),
+    safeString(material.unit).toLowerCase(),
+    safeString(material.vendor).toLowerCase(),
+    safeString(material.poNumber).toLowerCase(),
+    safeString(location).toLowerCase(),
+  ].join("||");
+}
+
 export default function TransferTicketsPage() {
   const [jobs, setJobs] = useState<Job[]>([]);
   const [employees, setEmployees] = useState<Employee[]>([]);
@@ -287,6 +304,15 @@ export default function TransferTicketsPage() {
     loadJobs();
     loadMaterialsApi();
   }, []);
+
+  async function reloadMaterialsFromApi() {
+    const response = await fetch("/api/materials", { cache: "no-store" });
+    if (!response.ok) throw new Error("Failed to reload materials");
+    const data = await response.json();
+    const rows = Array.isArray(data) ? data : [];
+    setMaterials(rows);
+    return rows as Material[];
+  }
 
   function saveAllData(args: {
     nextTickets?: ShopTicket[];
@@ -450,10 +476,7 @@ export default function TransferTicketsPage() {
     return materials
       .filter((item) => {
         if (!fromLocation) return true;
-        return (
-          safeString(item.job).toLowerCase() === fromLocation ||
-          safeString(item.location).toLowerCase() === fromLocation
-        );
+        return safeString(item.location).toLowerCase() === fromLocation;
       })
       .map((item) => ({
         value: String(item.id),
@@ -463,6 +486,7 @@ export default function TransferTicketsPage() {
             safeString(item.job),
             safeString(item.poNumber),
             safeString(item.location),
+            `Stock ${safeNumber((item as any).stockQty, 0)}`,
           ]
             .filter(Boolean)
             .join(" • ") || `Material ${item.id}`,
@@ -533,6 +557,11 @@ export default function TransferTicketsPage() {
   function addDraftLine() {
     if (!lineForm.itemName.trim()) {
       alert("Select an item.");
+      return;
+    }
+
+    if (!lineForm.fromLocation.trim() || !lineForm.toLocation.trim()) {
+      alert("Select both From Location and To Location.");
       return;
     }
 
@@ -614,13 +643,97 @@ export default function TransferTicketsPage() {
     };
   }
 
-  function updateTicketStatus(id: number, status: TicketStatus) {
+  async function completeMaterialLine(
+    line: TicketLine,
+    availableMaterials: Material[]
+  ) {
+    if (line.itemType !== "Material" || line.itemId == null) return;
+
+    const qty = Math.max(0, Number(line.qty) || 0);
+    if (qty <= 0) return;
+
+    const fromLocation = normalizeLocation(line.fromLocation);
+    const toLocation = normalizeLocation(line.toLocation);
+
+    const source = availableMaterials.find(
+      (material) => Number(material.id) === Number(line.itemId)
+    );
+    if (!source) return;
+
+    if (
+      safeString(source.location).toLowerCase() !== safeString(fromLocation).toLowerCase()
+    ) {
+      return;
+    }
+
+    const sourceNextStock = Math.max(Number((source as any).stockQty || 0) - qty, 0);
+
+    const sourceUpdateResponse = await fetch(`/api/materials/${source.id}`, {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        ...source,
+        stockQty: sourceNextStock,
+      }),
+    });
+
+    if (!sourceUpdateResponse.ok) {
+      throw new Error(`Failed updating source material row for ${source.item}`);
+    }
+
+    const targetKey = buildMaterialTargetKey(source, toLocation);
+
+    const target = availableMaterials.find(
+      (material) => buildMaterialTargetKey(material, safeString(material.location)) === targetKey
+    );
+
+    if (target) {
+      const targetNextStock = Number((target as any).stockQty || 0) + qty;
+
+      const targetUpdateResponse = await fetch(`/api/materials/${target.id}`, {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          ...target,
+          stockQty: targetNextStock,
+        }),
+      });
+
+      if (!targetUpdateResponse.ok) {
+        throw new Error(`Failed updating destination material row for ${source.item}`);
+      }
+    } else {
+      const createResponse = await fetch("/api/materials", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          job: source.job,
+          item: source.item,
+          category: source.category,
+          orderedQty: isShopLocation(toLocation) ? 0 : qty,
+          receivedQty: isShopLocation(toLocation) ? 0 : qty,
+          stockQty: qty,
+          allocatedQty: 0,
+          unit: source.unit,
+          vendor: source.vendor,
+          status: isShopLocation(toLocation) ? "Ordered" : "Received",
+          location: toLocation,
+          poNumber: source.poNumber,
+        }),
+      });
+
+      if (!createResponse.ok) {
+        throw new Error(`Failed creating destination material row for ${source.item}`);
+      }
+    }
+  }
+
+  async function updateTicketStatus(id: number, status: TicketStatus) {
     const current = loadStoredAppData();
     const currentTickets = current.tickets ?? [];
     const currentRequests = current.requests ?? [];
     const currentTools = loadStoredTools();
     const currentEquipment = loadStoredEquipment();
-    const currentMaterials = current.materials ?? [];
     const currentPrefab = current.prefab ?? [];
 
     const ticket = currentTickets.find((t) => t.id === id);
@@ -636,105 +749,103 @@ export default function TransferTicketsPage() {
 
     if (ticket.status === "Complete") return;
 
-    const completedTickets = currentTickets.map((t) =>
-      t.id === id ? { ...t, status: "Complete" as const } : t
-    );
+    try {
+      let apiMaterials = [...materials];
 
-    const nextToolInventory = currentTools.map((tool) => {
-      const matchingLine = ticket.lines.find(
-        (line) => line.itemType === "Tool" && Number(line.itemId) === Number(tool.id)
+      for (const line of ticket.lines) {
+        if (line.itemType === "Material") {
+          await completeMaterialLine(line, apiMaterials);
+          apiMaterials = await reloadMaterialsFromApi();
+        }
+      }
+
+      const completedTickets = currentTickets.map((t) =>
+        t.id === id ? { ...t, status: "Complete" as const } : t
       );
-      if (!matchingLine) return tool;
 
-      const toLocation = normalizeLocation(matchingLine.toLocation);
-      const nextAssignmentType = locationToAssignmentType(toLocation, employees);
-      const toIsShop = isShopLocation(toLocation);
-      const toIsPerson = isPersonLocation(toLocation, employees);
+      const nextToolInventory = currentTools.map((tool) => {
+        const matchingLine = ticket.lines.find(
+          (line) => line.itemType === "Tool" && Number(line.itemId) === Number(tool.id)
+        );
+        if (!matchingLine) return tool;
 
-      return {
-        ...tool,
-        jobNumber: nextAssignmentType === "Job" ? toLocation : "",
-        assignmentType: nextAssignmentType,
-        assignedTo: toIsPerson ? toLocation : "",
-        toolRoomLocation: toIsShop ? toLocation : "",
-        transferDateIn: toIsShop ? todayIsoDate() : tool.transferDateIn,
-        transferDateOut: todayIsoDate(),
-      };
-    });
+        const toLocation = normalizeLocation(matchingLine.toLocation);
+        const nextAssignmentType = locationToAssignmentType(toLocation, employees);
+        const toIsShop = isShopLocation(toLocation);
+        const toIsPerson = isPersonLocation(toLocation, employees);
 
-    const nextEquipmentInventory = currentEquipment.map((item) => {
-      const matchingLine = ticket.lines.find(
-        (line) =>
-          (line.itemType === "Trailer" ||
-            line.itemType === "Vehicle" ||
-            line.itemType === "Equipment") &&
-          Number(line.itemId) === Number(item.id)
-      );
-      if (!matchingLine) return item;
+        return {
+          ...tool,
+          jobNumber: nextAssignmentType === "Job" ? toLocation : "",
+          assignmentType: nextAssignmentType,
+          assignedTo: toIsPerson ? toLocation : "",
+          toolRoomLocation: toIsShop ? toLocation : "",
+          transferDateIn: toIsShop ? todayIsoDate() : tool.transferDateIn,
+          transferDateOut: todayIsoDate(),
+        };
+      });
 
-      const toLocation = normalizeLocation(matchingLine.toLocation);
-      const nextAssignmentType = locationToAssignmentType(toLocation, employees);
-      const toIsShop = isShopLocation(toLocation);
-      const toIsPerson = isPersonLocation(toLocation, employees);
+      const nextEquipmentInventory = currentEquipment.map((item) => {
+        const matchingLine = ticket.lines.find(
+          (line) =>
+            (line.itemType === "Trailer" ||
+              line.itemType === "Vehicle" ||
+              line.itemType === "Equipment") &&
+            Number(line.itemId) === Number(item.id)
+        );
+        if (!matchingLine) return item;
 
-      return {
-        ...item,
-        jobNumber: nextAssignmentType === "Job" ? toLocation : "",
-        assignmentType: nextAssignmentType,
-        assignedTo: toIsPerson ? toLocation : "",
-        toolRoomLocation: toIsShop ? toLocation : "",
-        transferDateIn: toIsShop ? todayIsoDate() : item.transferDateIn,
-        transferDateOut: todayIsoDate(),
-      };
-    });
+        const toLocation = normalizeLocation(matchingLine.toLocation);
+        const nextAssignmentType = locationToAssignmentType(toLocation, employees);
+        const toIsShop = isShopLocation(toLocation);
+        const toIsPerson = isPersonLocation(toLocation, employees);
 
-    const nextMaterials = currentMaterials.map((material) => {
-      const matchingLine = ticket.lines.find(
-        (line) => line.itemType === "Material" && Number(line.itemId) === Number(material.id)
-      );
-      if (!matchingLine) return material;
+        return {
+          ...item,
+          jobNumber: nextAssignmentType === "Job" ? toLocation : "",
+          assignmentType: nextAssignmentType,
+          assignedTo: toIsPerson ? toLocation : "",
+          toolRoomLocation: toIsShop ? toLocation : "",
+          transferDateIn: toIsShop ? todayIsoDate() : item.transferDateIn,
+          transferDateOut: todayIsoDate(),
+        };
+      });
 
-      const toLocation = normalizeLocation(matchingLine.toLocation);
-      const toIsShop = isShopLocation(toLocation);
+      const nextPrefab = currentPrefab.map((item) => {
+        const matchingLine = ticket.lines.find(
+          (line) => line.itemType === "Prefab" && Number(line.itemId) === Number(item.id)
+        );
+        if (!matchingLine) return item;
 
-      return {
-        ...material,
-        job: toIsShop || isPersonLocation(toLocation, employees) ? "" : toLocation,
-        location: toLocation,
-      };
-    });
+        const toLocation = normalizeLocation(matchingLine.toLocation);
+        const toIsShop = isShopLocation(toLocation);
 
-    const nextPrefab = currentPrefab.map((item) => {
-      const matchingLine = ticket.lines.find(
-        (line) => line.itemType === "Prefab" && Number(line.itemId) === Number(item.id)
-      );
-      if (!matchingLine) return item;
+        return {
+          ...item,
+          job: toIsShop || isPersonLocation(toLocation, employees) ? "" : toLocation,
+        };
+      });
 
-      const toLocation = normalizeLocation(matchingLine.toLocation);
-      const toIsShop = isShopLocation(toLocation);
+      let nextRequests = currentRequests;
 
-      return {
-        ...item,
-        job: toIsShop || isPersonLocation(toLocation, employees) ? "" : toLocation,
-      };
-    });
+      if (ticket.sourceRequestId) {
+        nextRequests = currentRequests.map((request) =>
+          request.id === ticket.sourceRequestId ? markRequestComplete(request) : request
+        );
+      }
 
-    let nextRequests = currentRequests;
-
-    if (ticket.sourceRequestId) {
-      nextRequests = currentRequests.map((request) =>
-        request.id === ticket.sourceRequestId ? markRequestComplete(request) : request
-      );
+      saveAllData({
+        nextTickets: completedTickets,
+        nextRequests,
+        nextToolInventory,
+        nextEquipmentInventory,
+        nextMaterials: apiMaterials,
+        nextPrefab,
+      });
+    } catch (error) {
+      console.error("Completing transfer ticket failed:", error);
+      alert("Failed to complete transfer ticket.");
     }
-
-    saveAllData({
-      nextTickets: completedTickets,
-      nextRequests,
-      nextToolInventory,
-      nextEquipmentInventory,
-      nextMaterials,
-      nextPrefab,
-    });
   }
 
   return (
@@ -1121,7 +1232,7 @@ function TicketTable({
   onUpdateStatus,
 }: {
   rows: ShopTicket[];
-  onUpdateStatus: (id: number, status: TicketStatus) => void;
+  onUpdateStatus: (id: number, status: TicketStatus) => void | Promise<void>;
 }) {
   if (!rows.length) {
     return <div style={{ color: "#a3a3a3" }}>No tickets found.</div>;
