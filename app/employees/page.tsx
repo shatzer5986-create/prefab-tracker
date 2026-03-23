@@ -5,27 +5,7 @@ import AppSidebar from "@/components/AppSidebar";
 import Section from "@/components/Section";
 import StatCard from "@/components/StatCard";
 
-import type { AppData, Employee } from "@/types";
-
-const STORAGE_KEY = "prefab-tracker-v7";
-
-const defaultData: AppData = {
-  jobs: [],
-  materials: [],
-  prefab: [],
-  purchaseOrders: [],
-  assemblies: [],
-  assemblyBom: [],
-  regularInventory: [],
-  materialMovements: [],
-  toolInventory: [],
-  equipmentInventory: [],
-  inventoryLogs: [],
-  requests: [],
-  notifications: [],
-  tickets: [],
-  employees: [],
-};
+import type { Employee } from "@/types";
 
 const emptyEmployeeForm: Omit<Employee, "id"> = {
   name: "",
@@ -37,63 +17,35 @@ function safeString(value: unknown) {
   return typeof value === "string" ? value.trim() : "";
 }
 
-function loadStoredAppData(): AppData {
-  if (typeof window === "undefined") return defaultData;
-
-  try {
-    const raw = localStorage.getItem(STORAGE_KEY);
-    if (!raw) return defaultData;
-
-    const parsed = JSON.parse(raw) as AppData;
-
-    return {
-      ...defaultData,
-      ...parsed,
-      jobs: Array.isArray(parsed.jobs) ? parsed.jobs : [],
-      materials: Array.isArray(parsed.materials) ? parsed.materials : [],
-      prefab: Array.isArray(parsed.prefab) ? parsed.prefab : [],
-      purchaseOrders: Array.isArray(parsed.purchaseOrders) ? parsed.purchaseOrders : [],
-      assemblies: Array.isArray(parsed.assemblies) ? parsed.assemblies : [],
-      assemblyBom: Array.isArray(parsed.assemblyBom) ? parsed.assemblyBom : [],
-      regularInventory: Array.isArray(parsed.regularInventory) ? parsed.regularInventory : [],
-      materialMovements: Array.isArray(parsed.materialMovements)
-        ? parsed.materialMovements
-        : [],
-      toolInventory: Array.isArray(parsed.toolInventory) ? parsed.toolInventory : [],
-      equipmentInventory: Array.isArray(parsed.equipmentInventory)
-        ? parsed.equipmentInventory
-        : [],
-      inventoryLogs: Array.isArray(parsed.inventoryLogs) ? parsed.inventoryLogs : [],
-      requests: Array.isArray(parsed.requests) ? parsed.requests : [],
-      notifications: Array.isArray(parsed.notifications) ? parsed.notifications : [],
-      tickets: Array.isArray(parsed.tickets) ? parsed.tickets : [],
-      employees: Array.isArray(parsed.employees) ? parsed.employees : [],
-    };
-  } catch {
-    return defaultData;
-  }
-}
-
-function saveEmployees(rows: Employee[]) {
-  const current = loadStoredAppData();
-  localStorage.setItem(
-    STORAGE_KEY,
-    JSON.stringify({
-      ...current,
-      employees: rows,
-    })
-  );
-}
-
 export default function EmployeesPage() {
   const [employees, setEmployees] = useState<Employee[]>([]);
   const [editingId, setEditingId] = useState<number | null>(null);
   const [form, setForm] = useState<Omit<Employee, "id">>(emptyEmployeeForm);
   const [search, setSearch] = useState("");
+  const [loading, setLoading] = useState(true);
+  const [saving, setSaving] = useState(false);
+
+  async function loadEmployees() {
+    try {
+      setLoading(true);
+      const response = await fetch("/api/employees", { cache: "no-store" });
+
+      if (!response.ok) {
+        throw new Error("Failed to load employees");
+      }
+
+      const rows = await response.json();
+      setEmployees(Array.isArray(rows) ? rows : []);
+    } catch (error) {
+      console.error("Loading employees failed:", error);
+      alert("Failed to load employees.");
+    } finally {
+      setLoading(false);
+    }
+  }
 
   useEffect(() => {
-    const parsed = loadStoredAppData();
-    setEmployees(parsed.employees || []);
+    loadEmployees();
   }, []);
 
   const activeEmployees = useMemo(
@@ -123,7 +75,7 @@ export default function EmployeesPage() {
     setEditingId(null);
   }
 
-  function handleSave() {
+  async function handleSave() {
     const name = safeString(form.name);
     const title = safeString(form.title);
 
@@ -132,46 +84,58 @@ export default function EmployeesPage() {
       return;
     }
 
-    const current = loadStoredAppData().employees || [];
-    let nextRows: Employee[];
+    try {
+      setSaving(true);
 
-    if (editingId !== null) {
-      nextRows = current.map((employee) =>
-        employee.id === editingId
-          ? {
-              ...employee,
-              name,
-              title,
-              isActive: form.isActive,
-            }
-          : employee
-      );
-    } else {
-      const duplicate = current.find(
-        (employee) => employee.name.toLowerCase() === name.toLowerCase()
-      );
+      if (editingId !== null) {
+        const response = await fetch(`/api/employees/${editingId}`, {
+          method: "PUT",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            name,
+            title,
+            isActive: form.isActive,
+          }),
+        });
 
-      if (duplicate) {
-        alert("That employee already exists.");
-        return;
+        if (!response.ok) {
+          const errorData = await response.json().catch(() => null);
+          throw new Error(errorData?.error || "Failed to update employee");
+        }
+      } else {
+        const duplicate = employees.find(
+          (employee) => employee.name.toLowerCase() === name.toLowerCase()
+        );
+
+        if (duplicate) {
+          alert("That employee already exists.");
+          return;
+        }
+
+        const response = await fetch("/api/employees", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            name,
+            title,
+            isActive: form.isActive,
+          }),
+        });
+
+        if (!response.ok) {
+          const errorData = await response.json().catch(() => null);
+          throw new Error(errorData?.error || "Failed to create employee");
+        }
       }
 
-      nextRows = [
-        {
-          id: Date.now(),
-          name,
-          title,
-          isActive: form.isActive,
-        },
-        ...current,
-      ];
+      await loadEmployees();
+      resetForm();
+    } catch (error) {
+      console.error("Saving employee failed:", error);
+      alert(error instanceof Error ? error.message : "Failed to save employee.");
+    } finally {
+      setSaving(false);
     }
-
-    nextRows.sort((a, b) => a.name.localeCompare(b.name));
-
-    setEmployees(nextRows);
-    saveEmployees(nextRows);
-    resetForm();
   }
 
   function handleEdit(employee: Employee) {
@@ -185,32 +149,61 @@ export default function EmployeesPage() {
     window.scrollTo({ top: 0, behavior: "smooth" });
   }
 
-  function handleDelete(id: number) {
-    const nextRows = employees.filter((employee) => employee.id !== id);
-    setEmployees(nextRows);
-    saveEmployees(nextRows);
+  async function handleDelete(id: number) {
+    try {
+      const response = await fetch(`/api/employees/${id}`, {
+        method: "DELETE",
+      });
 
-    if (editingId === id) {
-      resetForm();
+      if (!response.ok) {
+        const errorData = await response.json().catch(() => null);
+        throw new Error(errorData?.error || "Failed to delete employee");
+      }
+
+      await loadEmployees();
+
+      if (editingId === id) {
+        resetForm();
+      }
+    } catch (error) {
+      console.error("Deleting employee failed:", error);
+      alert(error instanceof Error ? error.message : "Failed to delete employee.");
     }
   }
 
-  function toggleActive(id: number) {
-    const nextRows = employees.map((employee) =>
-      employee.id === id ? { ...employee, isActive: !employee.isActive } : employee
-    );
-    setEmployees(nextRows);
-    saveEmployees(nextRows);
+  async function toggleActive(id: number) {
+    const employee = employees.find((row) => row.id === id);
+    if (!employee) return;
 
-    if (editingId === id) {
-      const match = nextRows.find((employee) => employee.id === id);
-      if (match) {
+    try {
+      const response = await fetch(`/api/employees/${id}`, {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          name: employee.name,
+          title: employee.title || "",
+          isActive: !employee.isActive,
+        }),
+      });
+
+      if (!response.ok) {
+        const errorData = await response.json().catch(() => null);
+        throw new Error(errorData?.error || "Failed to update employee status");
+      }
+
+      await loadEmployees();
+
+      if (editingId === id) {
+        const updated = { ...employee, isActive: !employee.isActive };
         setForm({
-          name: match.name,
-          title: match.title || "",
-          isActive: match.isActive,
+          name: updated.name,
+          title: updated.title || "",
+          isActive: updated.isActive,
         });
       }
+    } catch (error) {
+      console.error("Toggling employee failed:", error);
+      alert(error instanceof Error ? error.message : "Failed to update employee.");
     }
   }
 
@@ -295,8 +288,17 @@ export default function EmployeesPage() {
               </div>
 
               <div style={{ display: "flex", gap: 10, flexWrap: "wrap" }}>
-                <button type="button" onClick={handleSave} style={actionButtonStyle}>
-                  {editingId !== null ? "Update Employee" : "Save Employee"}
+                <button
+                  type="button"
+                  onClick={handleSave}
+                  style={actionButtonStyle}
+                  disabled={saving}
+                >
+                  {saving
+                    ? "Saving..."
+                    : editingId !== null
+                    ? "Update Employee"
+                    : "Save Employee"}
                 </button>
 
                 <button type="button" onClick={resetForm} style={secondaryButtonStyle}>
@@ -316,7 +318,9 @@ export default function EmployeesPage() {
                 style={inputStyle}
               />
 
-              {filteredEmployees.length === 0 ? (
+              {loading ? (
+                <div style={emptyStateStyle}>Loading employees...</div>
+              ) : filteredEmployees.length === 0 ? (
                 <div style={emptyStateStyle}>No employees found.</div>
               ) : (
                 <div style={{ display: "grid", gap: 12 }}>
