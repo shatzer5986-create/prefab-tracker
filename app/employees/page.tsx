@@ -1,521 +1,417 @@
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
-import AppSidebar from "@/components/AppSidebar";
 import Section from "@/components/Section";
-import StatCard from "@/components/StatCard";
-
+import InputBlock, { inputStyle } from "@/components/InputBlock";
+import {
+  buttonStyle,
+  secondaryButtonStyle,
+  formGrid,
+  tableStyle,
+  Th,
+  Td,
+  TableWrapper,
+  ActionButtons,
+} from "@/components/TableBits";
 import type { Employee } from "@/types";
 
-const emptyEmployeeForm: Omit<Employee, "id"> = {
-  name: "",
-  title: "",
-  isActive: true,
+const STORAGE_KEY = "prefab-tracker-v7";
+
+type AppDataShape = {
+  employees?: Employee[];
+  [key: string]: unknown;
 };
 
-function safeString(value: unknown) {
-  return typeof value === "string" ? value.trim() : "";
-}
+const emptyForm = {
+  name: "",
+  email: "",
+  phone: "",
+};
 
 export default function EmployeesPage() {
   const [employees, setEmployees] = useState<Employee[]>([]);
+  const [form, setForm] = useState(emptyForm);
   const [editingId, setEditingId] = useState<number | null>(null);
-  const [form, setForm] = useState<Omit<Employee, "id">>(emptyEmployeeForm);
+  const [loadError, setLoadError] = useState("");
   const [search, setSearch] = useState("");
-  const [loading, setLoading] = useState(true);
-  const [saving, setSaving] = useState(false);
-
-  async function loadEmployees() {
-    try {
-      setLoading(true);
-      const response = await fetch("/api/employees", { cache: "no-store" });
-
-      if (!response.ok) {
-        throw new Error("Failed to load employees");
-      }
-
-      const rows = await response.json();
-      setEmployees(Array.isArray(rows) ? rows : []);
-    } catch (error) {
-      console.error("Loading employees failed:", error);
-      alert("Failed to load employees.");
-    } finally {
-      setLoading(false);
-    }
-  }
 
   useEffect(() => {
-    loadEmployees();
+    try {
+      const stored = localStorage.getItem(STORAGE_KEY);
+
+      if (!stored) {
+        setEmployees([]);
+        setLoadError("");
+        return;
+      }
+
+      const parsed: AppDataShape = JSON.parse(stored);
+      const employeeRows = Array.isArray(parsed.employees) ? parsed.employees : [];
+
+      const cleaned = employeeRows
+        .filter((row) => row && typeof row === "object")
+        .map((row) => ({
+          id: Number(row.id) || Date.now() + Math.floor(Math.random() * 100000),
+          name: String(row.name ?? "").trim(),
+          email: String(row.email ?? "").trim(),
+          phone: String(row.phone ?? "").trim(),
+        }))
+        .filter((row) => row.name);
+
+      setEmployees(cleaned);
+      setLoadError("");
+    } catch (error) {
+      console.error("Failed to load employees:", error);
+      setEmployees([]);
+      setLoadError("Failed to load employees");
+    }
   }, []);
 
-  const activeEmployees = useMemo(
-    () => employees.filter((employee) => employee.isActive),
-    [employees]
-  );
-
-  const inactiveEmployees = useMemo(
-    () => employees.filter((employee) => !employee.isActive),
-    [employees]
-  );
+  useEffect(() => {
+    try {
+      const stored = localStorage.getItem(STORAGE_KEY);
+      const parsed: AppDataShape = stored ? JSON.parse(stored) : {};
+      parsed.employees = employees;
+      localStorage.setItem(STORAGE_KEY, JSON.stringify(parsed));
+    } catch (error) {
+      console.error("Failed to save employees:", error);
+    }
+  }, [employees]);
 
   const filteredEmployees = useMemo(() => {
     const term = search.trim().toLowerCase();
     if (!term) return employees;
 
-    return employees.filter((employee) =>
-      [employee.name, employee.title, employee.isActive ? "active" : "inactive"]
-        .join(" ")
-        .toLowerCase()
-        .includes(term)
-    );
+    return employees.filter((employee) => {
+      return (
+        employee.name.toLowerCase().includes(term) ||
+        String(employee.email ?? "").toLowerCase().includes(term) ||
+        String(employee.phone ?? "").toLowerCase().includes(term)
+      );
+    });
   }, [employees, search]);
 
   function resetForm() {
-    setForm(emptyEmployeeForm);
+    setForm(emptyForm);
     setEditingId(null);
   }
 
-  async function handleSave() {
-    const name = safeString(form.name);
-    const title = safeString(form.title);
+  function handleSaveEmployee() {
+    const name = form.name.trim();
+    const email = form.email.trim();
+    const phone = form.phone.trim();
 
     if (!name) {
-      alert("Enter an employee name.");
+      alert("Employee name is required.");
       return;
     }
 
-    try {
-      setSaving(true);
+    const duplicate = employees.find(
+      (employee) =>
+        employee.name.trim().toLowerCase() === name.toLowerCase() &&
+        employee.id !== editingId
+    );
 
-      if (editingId !== null) {
-        const response = await fetch(`/api/employees/${editingId}`, {
-          method: "PUT",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            name,
-            title,
-            isActive: form.isActive,
-          }),
-        });
-
-        if (!response.ok) {
-          const errorData = await response.json().catch(() => null);
-          throw new Error(errorData?.error || "Failed to update employee");
-        }
-      } else {
-        const duplicate = employees.find(
-          (employee) => employee.name.toLowerCase() === name.toLowerCase()
-        );
-
-        if (duplicate) {
-          alert("That employee already exists.");
-          return;
-        }
-
-        const response = await fetch("/api/employees", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            name,
-            title,
-            isActive: form.isActive,
-          }),
-        });
-
-        if (!response.ok) {
-          const errorData = await response.json().catch(() => null);
-          throw new Error(errorData?.error || "Failed to create employee");
-        }
-      }
-
-      await loadEmployees();
-      resetForm();
-    } catch (error) {
-      console.error("Saving employee failed:", error);
-      alert(error instanceof Error ? error.message : "Failed to save employee.");
-    } finally {
-      setSaving(false);
+    if (duplicate) {
+      alert("An employee with that name already exists.");
+      return;
     }
+
+    if (editingId !== null) {
+      setEmployees((prev) =>
+        prev.map((employee) =>
+          employee.id === editingId
+            ? {
+                ...employee,
+                name,
+                email,
+                phone,
+              }
+            : employee
+        )
+      );
+    } else {
+      setEmployees((prev) => [
+        ...prev,
+        {
+          id: Date.now(),
+          name,
+          email,
+          phone,
+        },
+      ]);
+    }
+
+    resetForm();
   }
 
-  function handleEdit(employee: Employee) {
-    setEditingId(employee.id);
+  function handleEditEmployee(employee: Employee) {
     setForm({
-      name: employee.name,
-      title: employee.title || "",
-      isActive: employee.isActive,
+      name: employee.name ?? "",
+      email: employee.email ?? "",
+      phone: employee.phone ?? "",
     });
-
+    setEditingId(employee.id);
     window.scrollTo({ top: 0, behavior: "smooth" });
   }
 
-  async function handleDelete(id: number) {
-    try {
-      const response = await fetch(`/api/employees/${id}`, {
-        method: "DELETE",
-      });
-
-      if (!response.ok) {
-        const errorData = await response.json().catch(() => null);
-        throw new Error(errorData?.error || "Failed to delete employee");
-      }
-
-      await loadEmployees();
-
-      if (editingId === id) {
-        resetForm();
-      }
-    } catch (error) {
-      console.error("Deleting employee failed:", error);
-      alert(error instanceof Error ? error.message : "Failed to delete employee.");
-    }
-  }
-
-  async function toggleActive(id: number) {
+  function handleDeleteEmployee(id: number) {
     const employee = employees.find((row) => row.id === id);
-    if (!employee) return;
+    const confirmed = window.confirm(
+      `Delete employee${employee?.name ? ` "${employee.name}"` : ""}?`
+    );
+    if (!confirmed) return;
 
-    try {
-      const response = await fetch(`/api/employees/${id}`, {
-        method: "PUT",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          name: employee.name,
-          title: employee.title || "",
-          isActive: !employee.isActive,
-        }),
-      });
+    setEmployees((prev) => prev.filter((employee) => employee.id !== id));
 
-      if (!response.ok) {
-        const errorData = await response.json().catch(() => null);
-        throw new Error(errorData?.error || "Failed to update employee status");
-      }
-
-      await loadEmployees();
-
-      if (editingId === id) {
-        const updated = { ...employee, isActive: !employee.isActive };
-        setForm({
-          name: updated.name,
-          title: updated.title || "",
-          isActive: updated.isActive,
-        });
-      }
-    } catch (error) {
-      console.error("Toggling employee failed:", error);
-      alert(error instanceof Error ? error.message : "Failed to update employee.");
+    if (editingId === id) {
+      resetForm();
     }
   }
 
+  function handleClearAllEmployees() {
+    if (employees.length === 0) return;
+
+    const confirmed = window.confirm(
+      "Delete all employees? This will remove the employee list from the app."
+    );
+    if (!confirmed) return;
+
+    setEmployees([]);
+    resetForm();
+  }
+
+  async function handleImportEmployees(
+    e: React.ChangeEvent<HTMLInputElement>
+  ) {
+    const file = e.target.files?.[0];
+    if (!file) return;
+
+    try {
+      const text = await file.text();
+      const lines = text
+        .split(/\r?\n/)
+        .map((line) => line.trim())
+        .filter(Boolean);
+
+      if (lines.length < 2) {
+        alert("The CSV file is empty or missing data rows.");
+        e.target.value = "";
+        return;
+      }
+
+      const dataLines = lines.slice(1);
+
+      const importedRows = dataLines
+        .map((line, index) => {
+          const parts = line.split(",").map((part) =>
+            part.replace(/^"|"$/g, "").trim()
+          );
+
+          return {
+            id: Date.now() + index,
+            name: parts[0] ?? "",
+            email: parts[1] ?? "",
+            phone: parts[2] ?? "",
+          };
+        })
+        .filter((row) => row.name);
+
+      if (importedRows.length === 0) {
+        alert("No valid employees were found in the file.");
+        e.target.value = "";
+        return;
+      }
+
+      setEmployees((prev) => {
+        const existingByName = new Set(
+          prev.map((employee) => employee.name.trim().toLowerCase())
+        );
+
+        const uniqueImports = importedRows.filter((row) => {
+          const key = row.name.trim().toLowerCase();
+          if (!key || existingByName.has(key)) return false;
+          existingByName.add(key);
+          return true;
+        });
+
+        if (uniqueImports.length === 0) {
+          alert("All imported employees already exist.");
+          return prev;
+        }
+
+        return [...prev, ...uniqueImports];
+      });
+    } catch (error) {
+      console.error("Failed to import employees:", error);
+      alert("Failed to import employees.");
+    }
+
+    e.target.value = "";
+  }
+
+  function downloadEmployeeTemplate() {
+    const csv = [
+      "name,email,phone",
+      "John Doe,john.doe@email.com,555-555-5555",
+      "Jane Smith,jane.smith@email.com,555-555-1111",
+    ].join("\n");
+
+    const blob = new Blob([csv], { type: "text/csv;charset=utf-8;" });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement("a");
+    link.href = url;
+    link.download = "employee-template.csv";
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+    URL.revokeObjectURL(url);
+  }
+
   return (
-    <main style={pageStyle}>
-      <div style={layoutStyle}>
-        <AppSidebar active="employees" />
-
-        <div style={mainStyle}>
-          <div style={topBarStyle}>
-            <div>
-              <h1 style={{ fontSize: 30, margin: 0, color: "#f5f5f5" }}>Employees</h1>
-              <p style={{ color: "#d1d5db", margin: "6px 0 0 0" }}>
-                Manage employee names for assignment dropdowns.
-              </p>
-            </div>
-          </div>
-
-          <div
-            style={{
-              display: "grid",
-              gridTemplateColumns: "repeat(auto-fit, minmax(220px, 1fr))",
-              gap: 16,
-            }}
-          >
-            <StatCard title="All Employees" value={String(employees.length)} />
-            <StatCard title="Active" value={String(activeEmployees.length)} />
-            <StatCard title="Inactive" value={String(inactiveEmployees.length)} />
-          </div>
-
-          <Section
-            title={editingId !== null ? "Edit Employee" : "Add Employee"}
-            collapsible
-            defaultOpen
-          >
-            <div style={{ display: "grid", gap: 16 }}>
-              <div
-                style={{
-                  display: "grid",
-                  gridTemplateColumns: "repeat(auto-fit, minmax(220px, 1fr))",
-                  gap: 16,
-                }}
-              >
-                <Input
-                  label="Name"
-                  value={form.name}
-                  onChange={(value) =>
-                    setForm((prev) => ({
-                      ...prev,
-                      name: value,
-                    }))
-                  }
-                />
-
-                <Input
-                  label="Title"
-                  value={form.title || ""}
-                  onChange={(value) =>
-                    setForm((prev) => ({
-                      ...prev,
-                      title: value,
-                    }))
-                  }
-                />
-
-                <div>
-                  <label style={labelStyle}>Status</label>
-                  <select
-                    value={form.isActive ? "Active" : "Inactive"}
-                    onChange={(e) =>
-                      setForm((prev) => ({
-                        ...prev,
-                        isActive: e.target.value === "Active",
-                      }))
-                    }
-                    style={inputStyle}
-                  >
-                    <option value="Active">Active</option>
-                    <option value="Inactive">Inactive</option>
-                  </select>
-                </div>
-              </div>
-
-              <div style={{ display: "flex", gap: 10, flexWrap: "wrap" }}>
-                <button
-                  type="button"
-                  onClick={handleSave}
-                  style={actionButtonStyle}
-                  disabled={saving}
-                >
-                  {saving
-                    ? "Saving..."
-                    : editingId !== null
-                    ? "Update Employee"
-                    : "Save Employee"}
-                </button>
-
-                <button type="button" onClick={resetForm} style={secondaryButtonStyle}>
-                  Clear
-                </button>
-              </div>
-            </div>
-          </Section>
-
-          <Section title="Employee List" collapsible defaultOpen>
-            <div style={{ display: "grid", gap: 12 }}>
-              <input
-                type="text"
-                placeholder="Search employees..."
-                value={search}
-                onChange={(e) => setSearch(e.target.value)}
-                style={inputStyle}
-              />
-
-              {loading ? (
-                <div style={emptyStateStyle}>Loading employees...</div>
-              ) : filteredEmployees.length === 0 ? (
-                <div style={emptyStateStyle}>No employees found.</div>
-              ) : (
-                <div style={{ display: "grid", gap: 12 }}>
-                  {filteredEmployees.map((employee) => (
-                    <div key={employee.id} style={cardStyle}>
-                      <div style={cardHeaderStyle}>
-                        <div>
-                          <div style={{ fontSize: 18, fontWeight: 700, color: "#f5f5f5" }}>
-                            {employee.name}
-                          </div>
-                          <div style={{ color: "#d1d5db", fontSize: 14 }}>
-                            {employee.title || "-"}
-                          </div>
-                        </div>
-
-                        <div
-                          style={{
-                            ...statusBadgeStyle,
-                            background: employee.isActive ? "#dcfce7" : "#3f3f46",
-                            color: employee.isActive ? "#166534" : "#e4e4e7",
-                          }}
-                        >
-                          {employee.isActive ? "Active" : "Inactive"}
-                        </div>
-                      </div>
-
-                      <div style={{ display: "flex", gap: 10, flexWrap: "wrap" }}>
-                        <button
-                          type="button"
-                          onClick={() => handleEdit(employee)}
-                          style={actionButtonStyle}
-                        >
-                          Edit
-                        </button>
-
-                        <button
-                          type="button"
-                          onClick={() => toggleActive(employee.id)}
-                          style={secondaryButtonStyle}
-                        >
-                          {employee.isActive ? "Deactivate" : "Activate"}
-                        </button>
-
-                        <button
-                          type="button"
-                          onClick={() => handleDelete(employee.id)}
-                          style={deleteButtonStyle}
-                        >
-                          Delete
-                        </button>
-                      </div>
-                    </div>
-                  ))}
-                </div>
-              )}
-            </div>
-          </Section>
-        </div>
+    <div style={{ display: "grid", gap: 16 }}>
+      <div>
+        <h1 style={{ margin: 0, fontSize: 28 }}>Employees</h1>
+        <p style={{ marginTop: 8, opacity: 0.8 }}>
+          Manage the employee list used across request forms and dropdowns.
+        </p>
+        {loadError ? (
+          <p style={{ color: "#fca5a5", fontWeight: 700 }}>{loadError}</p>
+        ) : null}
       </div>
-    </main>
-  );
-}
 
-function Input({
-  label,
-  value,
-  onChange,
-}: {
-  label: string;
-  value: string;
-  onChange: (value: string) => void;
-}) {
-  return (
-    <div>
-      <label style={labelStyle}>{label}</label>
-      <input
-        value={value}
-        onChange={(e) => onChange(e.target.value)}
-        style={inputStyle}
-      />
+      <Section title={editingId !== null ? "Edit Employee" : "Add Employee"} defaultOpen>
+        <div style={{ display: "grid", gap: 16 }}>
+          <div style={formGrid}>
+            <InputBlock label="Employee Name">
+              <input
+                value={form.name}
+                onChange={(e) =>
+                  setForm((prev) => ({ ...prev, name: e.target.value }))
+                }
+                style={inputStyle}
+                placeholder="Enter employee name"
+              />
+            </InputBlock>
+
+            <InputBlock label="Email">
+              <input
+                value={form.email}
+                onChange={(e) =>
+                  setForm((prev) => ({ ...prev, email: e.target.value }))
+                }
+                style={inputStyle}
+                placeholder="Enter email"
+              />
+            </InputBlock>
+
+            <InputBlock label="Phone">
+              <input
+                value={form.phone}
+                onChange={(e) =>
+                  setForm((prev) => ({ ...prev, phone: e.target.value }))
+                }
+                style={inputStyle}
+                placeholder="Enter phone number"
+              />
+            </InputBlock>
+          </div>
+
+          <div style={{ display: "flex", gap: 12, flexWrap: "wrap" }}>
+            <button type="button" onClick={handleSaveEmployee} style={buttonStyle}>
+              {editingId !== null ? "Update Employee" : "Add Employee"}
+            </button>
+
+            <button type="button" onClick={resetForm} style={secondaryButtonStyle}>
+              Cancel
+            </button>
+          </div>
+        </div>
+      </Section>
+
+      <Section title="Import / Tools" defaultOpen>
+        <div style={{ display: "flex", gap: 12, flexWrap: "wrap", alignItems: "center" }}>
+          <label style={{ cursor: "pointer" }}>
+            <input
+              type="file"
+              accept=".csv"
+              onChange={handleImportEmployees}
+              style={{ display: "none" }}
+            />
+            <span style={buttonStyle}>Import Employees</span>
+          </label>
+
+          <button
+            type="button"
+            onClick={downloadEmployeeTemplate}
+            style={secondaryButtonStyle}
+          >
+            Download Template
+          </button>
+
+          <button
+            type="button"
+            onClick={handleClearAllEmployees}
+            style={secondaryButtonStyle}
+          >
+            Clear All Employees
+          </button>
+        </div>
+
+        <p style={{ marginTop: 12, opacity: 0.75 }}>
+          CSV columns should be: <strong>name,email,phone</strong>
+        </p>
+      </Section>
+
+      <Section title="Employee List" defaultOpen>
+        <div style={{ display: "grid", gap: 16 }}>
+          <InputBlock label="Search">
+            <input
+              value={search}
+              onChange={(e) => setSearch(e.target.value)}
+              style={inputStyle}
+              placeholder="Search employees"
+            />
+          </InputBlock>
+
+          <TableWrapper>
+            <table style={tableStyle}>
+              <thead>
+                <tr>
+                  <Th>Name</Th>
+                  <Th>Email</Th>
+                  <Th>Phone</Th>
+                  <Th>Actions</Th>
+                </tr>
+              </thead>
+              <tbody>
+                {filteredEmployees.length === 0 ? (
+                  <tr>
+                    <Td colSpan={4}>No employees found.</Td>
+                  </tr>
+                ) : (
+                  filteredEmployees
+                    .slice()
+                    .sort((a, b) => a.name.localeCompare(b.name))
+                    .map((employee) => (
+                      <tr key={employee.id}>
+                        <Td>{employee.name}</Td>
+                        <Td>{employee.email || "-"}</Td>
+                        <Td>{employee.phone || "-"}</Td>
+                        <Td>
+                          <ActionButtons
+                            onEdit={() => handleEditEmployee(employee)}
+                            onDelete={() => handleDeleteEmployee(employee.id)}
+                          />
+                        </Td>
+                      </tr>
+                    ))
+                )}
+              </tbody>
+            </table>
+          </TableWrapper>
+        </div>
+      </Section>
     </div>
   );
 }
-
-const pageStyle: React.CSSProperties = {
-  minHeight: "100vh",
-  background: "#111111",
-  fontFamily: "Arial, sans-serif",
-  color: "#f5f5f5",
-};
-
-const layoutStyle: React.CSSProperties = {
-  display: "grid",
-  gridTemplateColumns: "280px 1fr",
-  minHeight: "100vh",
-};
-
-const mainStyle: React.CSSProperties = {
-  padding: 24,
-  display: "grid",
-  gap: 24,
-};
-
-const topBarStyle: React.CSSProperties = {
-  background: "#1a1a1a",
-  border: "1px solid #2f2f2f",
-  borderRadius: 16,
-  padding: 20,
-  display: "flex",
-  justifyContent: "space-between",
-  gap: 16,
-  flexWrap: "wrap",
-  alignItems: "flex-start",
-};
-
-const labelStyle: React.CSSProperties = {
-  display: "block",
-  marginBottom: 6,
-  fontSize: 14,
-  color: "#d1d5db",
-  fontWeight: 700,
-};
-
-const inputStyle: React.CSSProperties = {
-  width: "100%",
-  padding: "12px",
-  borderRadius: 8,
-  border: "1px solid #3a3a3a",
-  fontSize: 16,
-  boxSizing: "border-box",
-  background: "#121212",
-  color: "#f5f5f5",
-};
-
-const actionButtonStyle: React.CSSProperties = {
-  background: "#c2410c",
-  color: "white",
-  border: "1px solid #ea580c",
-  borderRadius: 10,
-  padding: "10px 14px",
-  cursor: "pointer",
-  fontSize: 14,
-  fontWeight: 700,
-};
-
-const secondaryButtonStyle: React.CSSProperties = {
-  background: "#2a2a2a",
-  color: "white",
-  border: "1px solid #3a3a3a",
-  borderRadius: 10,
-  padding: "10px 14px",
-  cursor: "pointer",
-  fontSize: 14,
-  fontWeight: 700,
-};
-
-const deleteButtonStyle: React.CSSProperties = {
-  background: "#991b1b",
-  color: "white",
-  border: "1px solid #b91c1c",
-  borderRadius: 10,
-  padding: "10px 14px",
-  cursor: "pointer",
-  fontSize: 14,
-  fontWeight: 700,
-};
-
-const emptyStateStyle: React.CSSProperties = {
-  background: "#1a1a1a",
-  border: "1px solid #2f2f2f",
-  borderRadius: 14,
-  padding: 18,
-  color: "#a3a3a3",
-};
-
-const cardStyle: React.CSSProperties = {
-  background: "#1a1a1a",
-  border: "1px solid #2f2f2f",
-  borderRadius: 14,
-  padding: 16,
-  display: "grid",
-  gap: 14,
-};
-
-const cardHeaderStyle: React.CSSProperties = {
-  display: "flex",
-  justifyContent: "space-between",
-  gap: 12,
-  flexWrap: "wrap",
-  alignItems: "flex-start",
-};
-
-const statusBadgeStyle: React.CSSProperties = {
-  padding: "6px 10px",
-  borderRadius: 999,
-  fontSize: 12,
-  fontWeight: 700,
-};

@@ -336,8 +336,9 @@ export type ShopTicket = {
 export type Employee = {
   id: number;
   name: string;
-  title: string;
-  isActive: boolean;
+  position: string;
+  email?: string;
+  phone?: string;
 };
 
 export type AppData = {
