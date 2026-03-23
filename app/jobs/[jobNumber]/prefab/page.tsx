@@ -58,6 +58,24 @@ function safeString(value: unknown) {
   return typeof value === "string" ? value.trim() : "";
 }
 
+function normalizeEmployeeName(value: unknown) {
+  return safeString(value).toLowerCase();
+}
+
+function cleanEmployees(rows: Employee[]) {
+  return rows
+    .filter((employee) => employee && typeof employee === "object")
+    .filter((employee) => safeString(employee.name))
+    .reduce<Employee[]>((acc, employee) => {
+      const exists = acc.some(
+        (row) => normalizeEmployeeName(row.name) === normalizeEmployeeName(employee.name)
+      );
+      if (!exists) acc.push(employee);
+      return acc;
+    }, [])
+    .sort((a, b) => safeString(a.name).localeCompare(safeString(b.name)));
+}
+
 function emptyPrefabRequestForm(jobNumber: string): RequestFormState {
   return {
     jobNumber,
@@ -103,8 +121,8 @@ export default function JobPrefabPage() {
   const [showRequestForm, setShowRequestForm] = useState(false);
   const [showPickupForm, setShowPickupForm] = useState(false);
   const [prefabRequestForm, setPrefabRequestForm] = useState<RequestFormState>(() =>
-  emptyPrefabRequestForm(jobNumber)
-);
+    emptyPrefabRequestForm(jobNumber)
+  );
 
   const [selectedPrefabIds, setSelectedPrefabIds] = useState<number[]>([]);
   const [pickupRequestedBy, setPickupRequestedBy] = useState("");
@@ -112,13 +130,26 @@ export default function JobPrefabPage() {
   const [pickupToLocation, setPickupToLocation] = useState("Shop");
   const [pickupNotes, setPickupNotes] = useState("");
 
+  async function loadEmployeesFromApi() {
+    try {
+      const response = await fetch("/api/employees", { cache: "no-store" });
+      if (!response.ok) throw new Error("Failed to load employees");
+
+      const data = await response.json();
+      const rows = Array.isArray(data) ? data : [];
+      setEmployees(cleanEmployees(rows));
+    } catch (error) {
+      console.error("Loading employees failed:", error);
+      setEmployees([]);
+    }
+  }
+
   function refreshFromStorage() {
     const parsed = loadStoredAppData();
     setPrefab(parsed?.prefab || fallbackData.prefab || []);
     setRequests(parsed?.requests || fallbackData.requests || []);
     setNotifications(parsed?.notifications || fallbackData.notifications || []);
     setJobs(parsed?.jobs || fallbackData.jobs || []);
-    setEmployees(parsed?.employees || fallbackData.employees || []);
   }
 
   useEffect(() => {
@@ -144,11 +175,23 @@ export default function JobPrefabPage() {
       }
     }
 
-    loadJobs();
-    refreshFromStorage();
+    async function init() {
+      await loadJobs();
+      refreshFromStorage();
+      await loadEmployeesFromApi();
+    }
 
-    const handleFocus = () => refreshFromStorage();
-    const handleStorage = () => refreshFromStorage();
+    init();
+
+    const handleFocus = () => {
+      refreshFromStorage();
+      loadEmployeesFromApi();
+    };
+
+    const handleStorage = () => {
+      refreshFromStorage();
+      loadEmployeesFromApi();
+    };
 
     window.addEventListener("focus", handleFocus);
     window.addEventListener("storage", handleStorage);
@@ -165,14 +208,13 @@ export default function JobPrefabPage() {
     const dataToSave: AppData = {
       ...latest,
       jobs: latest.jobs?.length ? latest.jobs : jobs,
-      employees: latest.employees?.length ? latest.employees : employees,
       prefab,
       requests,
       notifications,
     };
 
     localStorage.setItem(STORAGE_KEY, JSON.stringify(dataToSave));
-  }, [jobs, employees, prefab, requests, notifications]);
+  }, [jobs, prefab, requests, notifications]);
 
   const currentJob = useMemo(
     () => jobs.find((job) => job.jobNumber === jobNumber) || null,
@@ -195,11 +237,8 @@ export default function JobPrefabPage() {
   );
 
   const employeeOptions = useMemo(() => {
-  return [...employees]
-    .filter((employee) => employee.name?.trim())
-    .sort((a, b) => a.name.localeCompare(b.name))
-    .map((employee) => employee.name);
-}, [employees]);
+    return cleanEmployees(employees).map((employee) => safeString(employee.name));
+  }, [employees]);
 
   const totalPlanned = useMemo(
     () =>

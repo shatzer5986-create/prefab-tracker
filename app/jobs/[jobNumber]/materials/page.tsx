@@ -63,6 +63,24 @@ function safeNumber(value: unknown, fallback = 0) {
   return Number.isFinite(n) ? n : fallback;
 }
 
+function normalizeEmployeeName(value: unknown) {
+  return safeString(value).toLowerCase();
+}
+
+function cleanEmployees(rows: Employee[]) {
+  return rows
+    .filter((employee) => employee && typeof employee === "object")
+    .filter((employee) => safeString(employee.name))
+    .reduce<Employee[]>((acc, employee) => {
+      const exists = acc.some(
+        (row) => normalizeEmployeeName(row.name) === normalizeEmployeeName(employee.name)
+      );
+      if (!exists) acc.push(employee);
+      return acc;
+    }, [])
+    .sort((a, b) => safeString(a.name).localeCompare(safeString(b.name)));
+}
+
 function emptyMaterialRequestForm(jobNumber: string): RequestFormState {
   return {
     jobNumber,
@@ -140,6 +158,20 @@ export default function JobMaterialsPage() {
   const [pickupToLocation, setPickupToLocation] = useState("Shop");
   const [pickupNotes, setPickupNotes] = useState("");
 
+  async function loadEmployeesFromApi() {
+    try {
+      const response = await fetch("/api/employees", { cache: "no-store" });
+      if (!response.ok) throw new Error("Failed to load employees");
+
+      const data = await response.json();
+      const rows = Array.isArray(data) ? data : [];
+      setEmployees(cleanEmployees(rows));
+    } catch (error) {
+      console.error("Loading employees failed:", error);
+      setEmployees([]);
+    }
+  }
+
   async function reloadMaterials() {
     try {
       const response = await fetch("/api/materials", { cache: "no-store" });
@@ -156,7 +188,6 @@ export default function JobMaterialsPage() {
     setRequests(parsed?.requests || fallbackData.requests);
     setNotifications(parsed?.notifications || fallbackData.notifications);
     setJobs(parsed?.jobs || fallbackData.jobs);
-    setEmployees(parsed?.employees || fallbackData.employees);
   }
 
   function persistRequestsAndNotifications(
@@ -206,17 +237,24 @@ export default function JobMaterialsPage() {
       }
     }
 
-    loadJobs();
-    reloadMaterials();
-    refreshRequestsSide();
+    async function init() {
+      await loadJobs();
+      await reloadMaterials();
+      refreshRequestsSide();
+      await loadEmployeesFromApi();
+    }
+
+    init();
 
     const handleFocus = () => {
       reloadMaterials();
       refreshRequestsSide();
+      loadEmployeesFromApi();
     };
 
     const handleStorage = () => {
       refreshRequestsSide();
+      loadEmployeesFromApi();
     };
 
     window.addEventListener("focus", handleFocus);
@@ -259,11 +297,8 @@ export default function JobMaterialsPage() {
   );
 
   const employeeOptions = useMemo(() => {
-  return [...employees]
-    .filter((employee) => employee.name?.trim())
-    .sort((a, b) => a.name.localeCompare(b.name))
-    .map((employee) => employee.name);
-}, [employees]);
+    return cleanEmployees(employees).map((employee) => safeString(employee.name));
+  }, [employees]);
 
   const totalOrdered = useMemo(
     () => allJobMaterials.reduce((sum, row) => sum + Number(row.orderedQty || 0), 0),
@@ -753,7 +788,8 @@ export default function JobMaterialsPage() {
                 </div>
 
                 <div style={{ fontSize: 13, color: "#d1d5db" }}>
-                  Select reserved shop stock for this job, set the quantity for each, and create a request. Inventory will not move until the transfer ticket is completed.
+                  Select reserved shop stock for this job, set the quantity for each, and create a
+                  request. Inventory will not move until the transfer ticket is completed.
                 </div>
 
                 <div
@@ -861,9 +897,10 @@ export default function JobMaterialsPage() {
                                 {buildMaterialSubtitle(item)}
                               </div>
                               <div style={{ fontSize: 12, color: "#a3a3a3" }}>
-                                Ordered: {item.orderedQty ?? 0} • Received: {item.receivedQty ?? 0} •
-                                Stock: {(item as any).stockQty ?? 0} • Allocated: {item.allocatedQty ?? 0} •
-                                Unit: {item.unit || "-"}
+                                Ordered: {item.orderedQty ?? 0} • Received: {item.receivedQty ?? 0}
+                                {" • "}
+                                Stock: {(item as any).stockQty ?? 0} • Allocated:{" "}
+                                {item.allocatedQty ?? 0} • Unit: {item.unit || "-"}
                               </div>
                             </div>
                           </label>
@@ -929,7 +966,9 @@ export default function JobMaterialsPage() {
                 </div>
 
                 <div style={{ fontSize: 13, color: "#d1d5db" }}>
-                  Select one or more on-site material rows from this job, set the quantity for each, then send a pickup request. Inventory will not move until the transfer ticket is completed.
+                  Select one or more on-site material rows from this job, set the quantity for each,
+                  then send a pickup request. Inventory will not move until the transfer ticket is
+                  completed.
                 </div>
 
                 <div
@@ -1051,9 +1090,10 @@ export default function JobMaterialsPage() {
                                 {buildMaterialSubtitle(item)}
                               </div>
                               <div style={{ fontSize: 12, color: "#a3a3a3" }}>
-                                Ordered: {item.orderedQty ?? 0} • Received: {item.receivedQty ?? 0} •
-                                Stock: {(item as any).stockQty ?? 0} • Allocated: {item.allocatedQty ?? 0} •
-                                Unit: {item.unit || "-"}
+                                Ordered: {item.orderedQty ?? 0} • Received: {item.receivedQty ?? 0}
+                                {" • "}
+                                Stock: {(item as any).stockQty ?? 0} • Allocated:{" "}
+                                {item.allocatedQty ?? 0} • Unit: {item.unit || "-"}
                               </div>
                             </div>
                           </label>

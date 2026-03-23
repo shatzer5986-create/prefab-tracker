@@ -18,6 +18,25 @@ function safeString(value: unknown) {
   return typeof value === "string" ? value.trim() : "";
 }
 
+function normalizeEmployeeName(value: unknown) {
+  return safeString(value).toLowerCase();
+}
+
+function cleanEmployees(rows: Employee[]) {
+  return rows
+    .filter((employee) => employee && typeof employee === "object")
+    .filter((employee) => safeString(employee.name))
+    .reduce<Employee[]>((acc, employee) => {
+      const exists = acc.some(
+        (row) =>
+          normalizeEmployeeName(row.name) === normalizeEmployeeName(employee.name)
+      );
+      if (!exists) acc.push(employee);
+      return acc;
+    }, [])
+    .sort((a, b) => safeString(a.name).localeCompare(safeString(b.name)));
+}
+
 function dedupeStrings(values: string[]) {
   return values.filter((value, index, arr) => arr.indexOf(value) === index);
 }
@@ -110,7 +129,12 @@ function parseFleetCsvRows(fileRows: unknown[][]) {
 function buildEquipmentMatchKey(
   item: Pick<
     EquipmentItem,
-    "assetType" | "assetNumber" | "licensePlate" | "vinSerial" | "manufacturer" | "model"
+    | "assetType"
+    | "assetNumber"
+    | "licensePlate"
+    | "vinSerial"
+    | "manufacturer"
+    | "model"
   >
 ) {
   return [
@@ -316,6 +340,20 @@ export default function AssetManagerPage({
   );
   const [isBusy, setIsBusy] = useState(false);
 
+  async function loadEmployeesFromApi() {
+    try {
+      const response = await fetch("/api/employees", { cache: "no-store" });
+      if (!response.ok) throw new Error("Failed to load employees");
+
+      const rows = await response.json();
+      const data = Array.isArray(rows) ? rows : [];
+      setEmployees(cleanEmployees(data));
+    } catch (error) {
+      console.error("Loading employees failed:", error);
+      setEmployees([]);
+    }
+  }
+
   useEffect(() => {
     async function loadData() {
       try {
@@ -338,7 +376,22 @@ export default function AssetManagerPage({
       }
     }
 
-    loadData();
+    async function init() {
+      await loadData();
+      await loadEmployeesFromApi();
+    }
+
+    init();
+
+    const handleFocus = () => {
+      loadEmployeesFromApi();
+    };
+
+    window.addEventListener("focus", handleFocus);
+
+    return () => {
+      window.removeEventListener("focus", handleFocus);
+    };
   }, [assetType]);
 
   const jobOptions = useMemo(() => {
@@ -349,11 +402,8 @@ export default function AssetManagerPage({
   }, [jobs]);
 
   const employeeOptions = useMemo(() => {
-  return [...employees]
-    .filter((employee) => employee.name?.trim())
-    .sort((a, b) => a.name.localeCompare(b.name))
-    .map((employee) => employee.name);
-}, [employees]);
+    return cleanEmployees(employees).map((employee) => safeString(employee.name));
+  }, [employees]);
 
   const rows = useMemo(
     () => allAssets.filter((item) => item.assetType === assetType),
@@ -382,9 +432,12 @@ export default function AssetManagerPage({
   }
 
   async function reloadAssets() {
-    const response = await fetch(`/api/assets?assetType=${encodeURIComponent(assetType)}`, {
-      cache: "no-store",
-    });
+    const response = await fetch(
+      `/api/assets?assetType=${encodeURIComponent(assetType)}`,
+      {
+        cache: "no-store",
+      }
+    );
     if (!response.ok) throw new Error("Failed to load assets");
     const data = await response.json();
     setAllAssets(Array.isArray(data) ? data : []);
@@ -449,7 +502,9 @@ export default function AssetManagerPage({
             });
 
       if (!response.ok) {
-        throw new Error(editingId !== null ? "Failed to update asset" : "Failed to create asset");
+        throw new Error(
+          editingId !== null ? "Failed to update asset" : "Failed to create asset"
+        );
       }
 
       await reloadAssets();

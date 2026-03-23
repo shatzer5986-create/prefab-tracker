@@ -36,6 +36,25 @@ function safeString(value: unknown) {
   return typeof value === "string" ? value.trim() : "";
 }
 
+function normalizeEmployeeName(value: unknown) {
+  return safeString(value).toLowerCase();
+}
+
+function cleanEmployees(rows: Employee[]) {
+  return rows
+    .filter((employee) => employee && typeof employee === "object")
+    .filter((employee) => safeString(employee.name))
+    .reduce<Employee[]>((acc, employee) => {
+      const exists = acc.some(
+        (row) =>
+          normalizeEmployeeName(row.name) === normalizeEmployeeName(employee.name)
+      );
+      if (!exists) acc.push(employee);
+      return acc;
+    }, [])
+    .sort((a, b) => safeString(a.name).localeCompare(safeString(b.name)));
+}
+
 function dedupeStrings(values: string[]) {
   return values.filter((value, index, arr) => arr.indexOf(value) === index);
 }
@@ -180,6 +199,20 @@ export default function ToolManagerPage() {
   const [form, setForm] = useState<Omit<ToolItem, "id">>(emptyToolForm);
   const [isBusy, setIsBusy] = useState(false);
 
+  async function loadEmployeesFromApi() {
+    try {
+      const response = await fetch("/api/employees", { cache: "no-store" });
+      if (!response.ok) throw new Error("Failed to load employees");
+
+      const rows = await response.json();
+      const data = Array.isArray(rows) ? rows : [];
+      setEmployees(cleanEmployees(data));
+    } catch (error) {
+      console.error("Loading employees failed:", error);
+      setEmployees([]);
+    }
+  }
+
   useEffect(() => {
     async function loadData() {
       try {
@@ -200,7 +233,22 @@ export default function ToolManagerPage() {
       }
     }
 
-    loadData();
+    async function init() {
+      await loadData();
+      await loadEmployeesFromApi();
+    }
+
+    init();
+
+    const handleFocus = () => {
+      loadEmployeesFromApi();
+    };
+
+    window.addEventListener("focus", handleFocus);
+
+    return () => {
+      window.removeEventListener("focus", handleFocus);
+    };
   }, []);
 
   const jobOptions = useMemo(() => {
@@ -211,11 +259,8 @@ export default function ToolManagerPage() {
   }, [jobs]);
 
   const employeeOptions = useMemo(() => {
-  return [...employees]
-    .map((employee) => employee.name)
-    .filter((name) => name?.trim())
-    .sort((a, b) => a.localeCompare(b));
-}, [employees]);
+    return cleanEmployees(employees).map((employee) => safeString(employee.name));
+  }, [employees]);
 
   const assignedCount = useMemo(
     () =>
@@ -311,7 +356,9 @@ export default function ToolManagerPage() {
             });
 
       if (!response.ok) {
-        throw new Error(editingId !== null ? "Failed to update tool" : "Failed to create tool");
+        throw new Error(
+          editingId !== null ? "Failed to update tool" : "Failed to create tool"
+        );
       }
 
       await reloadTools();
@@ -435,7 +482,9 @@ export default function ToolManagerPage() {
             });
 
             if (!response.ok) {
-              throw new Error(`Failed to update tool ${row.description || row.itemNumber || row.id}`);
+              throw new Error(
+                `Failed to update tool ${row.description || row.itemNumber || row.id}`
+              );
             }
           }
 
@@ -447,7 +496,9 @@ export default function ToolManagerPage() {
             });
 
             if (!response.ok) {
-              throw new Error(`Failed to create tool ${row.description || row.itemNumber || ""}`);
+              throw new Error(
+                `Failed to create tool ${row.description || row.itemNumber || ""}`
+              );
             }
           }
 

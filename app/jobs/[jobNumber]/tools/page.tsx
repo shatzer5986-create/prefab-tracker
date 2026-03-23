@@ -81,6 +81,24 @@ function safeNumber(value: unknown, fallback = 0) {
   return Number.isFinite(n) ? n : fallback;
 }
 
+function normalizeEmployeeName(value: unknown) {
+  return safeString(value).toLowerCase();
+}
+
+function cleanEmployees(rows: Employee[]) {
+  return rows
+    .filter((employee) => employee && typeof employee === "object")
+    .filter((employee) => safeString(employee.name))
+    .reduce<Employee[]>((acc, employee) => {
+      const exists = acc.some(
+        (row) => normalizeEmployeeName(row.name) === normalizeEmployeeName(employee.name)
+      );
+      if (!exists) acc.push(employee);
+      return acc;
+    }, [])
+    .sort((a, b) => safeString(a.name).localeCompare(safeString(b.name)));
+}
+
 function isShopLocation(value: string) {
   const normalized = safeString(value).toLowerCase();
   return SHOP_LOCATIONS.some((loc) => loc.toLowerCase() === normalized);
@@ -180,12 +198,14 @@ export default function JobToolsPage() {
     setJobs(parsed?.jobs || fallbackData.jobs);
   }
 
-  async function loadEmployees() {
+  async function loadEmployeesFromApi() {
     try {
       const response = await fetch("/api/employees", { cache: "no-store" });
       if (!response.ok) throw new Error("Failed to load employees");
+
       const rows = await response.json();
-      setEmployees(Array.isArray(rows) ? rows : []);
+      const data = Array.isArray(rows) ? rows : [];
+      setEmployees(cleanEmployees(data));
     } catch (error) {
       console.error("Loading employees failed:", error);
       setEmployees([]);
@@ -247,16 +267,23 @@ export default function JobToolsPage() {
       }
     }
 
-    loadJobs();
-    loadEmployees();
-    refreshFromStorage();
+    async function init() {
+      await loadJobs();
+      refreshFromStorage();
+      await loadEmployeesFromApi();
+    }
+
+    init();
 
     const handleFocus = () => {
       refreshFromStorage();
-      loadEmployees();
+      loadEmployeesFromApi();
     };
 
-    const handleStorage = () => refreshFromStorage();
+    const handleStorage = () => {
+      refreshFromStorage();
+      loadEmployeesFromApi();
+    };
 
     window.addEventListener("focus", handleFocus);
     window.addEventListener("storage", handleStorage);
@@ -273,11 +300,8 @@ export default function JobToolsPage() {
   );
 
   const employeeOptions = useMemo(() => {
-  return [...employees]
-    .filter((employee) => employee.name?.trim())
-    .sort((a, b) => a.name.localeCompare(b.name))
-    .map((employee) => employee.name);
-}, [employees]);
+    return cleanEmployees(employees).map((employee) => safeString(employee.name));
+  }, [employees]);
 
   const assignedTools = useMemo(
     () =>

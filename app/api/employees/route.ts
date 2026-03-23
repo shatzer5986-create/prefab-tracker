@@ -45,7 +45,7 @@ export async function POST(req: NextRequest) {
 
     if (existing) {
       return NextResponse.json(
-        { error: "Employee already exists" },
+        { error: `Employee "${name}" already exists` },
         { status: 400 }
       );
     }
@@ -63,9 +63,10 @@ export async function POST(req: NextRequest) {
     return NextResponse.json(employee);
   } catch (error) {
     console.error("POST /api/employees failed:", error);
-    return NextResponse.json(
-      { error: "Failed to create employee" },
-      { status: 500 }
-    );
+
+    const message =
+      error instanceof Error ? error.message : "Failed to create employee";
+
+    return NextResponse.json({ error: message }, { status: 500 });
   }
 }

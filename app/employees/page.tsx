@@ -34,6 +34,10 @@ const emptyForm = {
   isActive: true,
 };
 
+function normalizeName(value: string) {
+  return value.trim().toLowerCase();
+}
+
 export default function EmployeesPage() {
   const [employees, setEmployees] = useState<EmployeeRow[]>([]);
   const [form, setForm] = useState(emptyForm);
@@ -49,9 +53,12 @@ export default function EmployeesPage() {
       setLoadError("");
 
       const response = await fetch("/api/employees", { cache: "no-store" });
-      if (!response.ok) throw new Error("Failed to load employees");
+      const data = await response.json().catch(() => []);
 
-      const data = await response.json();
+      if (!response.ok) {
+        throw new Error(data?.error || "Failed to load employees");
+      }
+
       const rows = Array.isArray(data) ? data : [];
 
       const cleaned: EmployeeRow[] = rows
@@ -66,13 +73,23 @@ export default function EmployeesPage() {
           createdAt: row.createdAt ? String(row.createdAt) : "",
           updatedAt: row.updatedAt ? String(row.updatedAt) : "",
         }))
-        .filter((row) => row.name);
+        .filter((row) => row.name)
+        .reduce<EmployeeRow[]>((acc, row) => {
+          const exists = acc.some(
+            (item) => normalizeName(item.name) === normalizeName(row.name)
+          );
+          if (!exists) acc.push(row);
+          return acc;
+        }, [])
+        .sort((a, b) => a.name.localeCompare(b.name));
 
       setEmployees(cleaned);
     } catch (error) {
       console.error("Failed to load employees:", error);
       setEmployees([]);
-      setLoadError("Failed to load employees");
+      setLoadError(
+        error instanceof Error ? error.message : "Failed to load employees"
+      );
     } finally {
       setIsLoading(false);
     }
@@ -91,7 +108,8 @@ export default function EmployeesPage() {
         employee.name.toLowerCase().includes(term) ||
         employee.title.toLowerCase().includes(term) ||
         String(employee.email ?? "").toLowerCase().includes(term) ||
-        String(employee.phone ?? "").toLowerCase().includes(term)
+        String(employee.phone ?? "").toLowerCase().includes(term) ||
+        (employee.isActive ? "active" : "inactive").includes(term)
       );
     });
   }, [employees, search]);
@@ -115,12 +133,12 @@ export default function EmployeesPage() {
 
     const duplicate = employees.find(
       (employee) =>
-        employee.name.trim().toLowerCase() === name.toLowerCase() &&
+        normalizeName(employee.name) === normalizeName(name) &&
         employee.id !== editingId
     );
 
     if (duplicate) {
-      alert("An employee with that name already exists.");
+      alert(`Employee "${name}" already exists.`);
       return;
     }
 
@@ -140,9 +158,10 @@ export default function EmployeesPage() {
           }),
         });
 
+        const data = await response.json().catch(() => ({}));
+
         if (!response.ok) {
-          const data = await response.json().catch(() => ({}));
-          throw new Error(data.error || "Failed to update employee");
+          throw new Error(data?.error || "Failed to update employee");
         }
       } else {
         const response = await fetch("/api/employees", {
@@ -157,9 +176,10 @@ export default function EmployeesPage() {
           }),
         });
 
+        const data = await response.json().catch(() => ({}));
+
         if (!response.ok) {
-          const data = await response.json().catch(() => ({}));
-          throw new Error(data.error || "Failed to create employee");
+          throw new Error(data?.error || "Failed to create employee");
         }
       }
 
@@ -199,9 +219,10 @@ export default function EmployeesPage() {
         method: "DELETE",
       });
 
+      const data = await response.json().catch(() => ({}));
+
       if (!response.ok) {
-        const data = await response.json().catch(() => ({}));
-        throw new Error(data.error || "Failed to delete employee");
+        throw new Error(data?.error || "Failed to delete employee");
       }
 
       await loadEmployees();
@@ -211,7 +232,9 @@ export default function EmployeesPage() {
       }
     } catch (error) {
       console.error("Failed to delete employee:", error);
-      alert(error instanceof Error ? error.message : "Failed to delete employee.");
+      alert(
+        error instanceof Error ? error.message : "Failed to delete employee."
+      );
     } finally {
       setIsSaving(false);
     }
@@ -262,16 +285,21 @@ export default function EmployeesPage() {
         return;
       }
 
-      const existingNames = new Set(
-        employees.map((employee) => employee.name.trim().toLowerCase())
-      );
-
-      const uniqueImports = importedRows.filter((row) => {
-        const key = row.name.trim().toLowerCase();
-        if (!key || existingNames.has(key)) return false;
-        existingNames.add(key);
+      const seenNames = new Set<string>();
+      const dedupedImportRows = importedRows.filter((row) => {
+        const key = normalizeName(row.name);
+        if (!key || seenNames.has(key)) return false;
+        seenNames.add(key);
         return true;
       });
+
+      const existingNames = new Set(
+        employees.map((employee) => normalizeName(employee.name))
+      );
+
+      const uniqueImports = dedupedImportRows.filter(
+        (row) => !existingNames.has(normalizeName(row.name))
+      );
 
       if (uniqueImports.length === 0) {
         alert("All imported employees already exist.");
@@ -286,9 +314,10 @@ export default function EmployeesPage() {
           body: JSON.stringify(row),
         });
 
+        const data = await response.json().catch(() => ({}));
+
         if (!response.ok) {
-          const data = await response.json().catch(() => ({}));
-          throw new Error(data.error || `Failed importing ${row.name}`);
+          throw new Error(data?.error || `Failed importing ${row.name}`);
         }
       }
 
@@ -296,7 +325,9 @@ export default function EmployeesPage() {
       alert(`Imported ${uniqueImports.length} employee(s).`);
     } catch (error) {
       console.error("Failed to import employees:", error);
-      alert(error instanceof Error ? error.message : "Failed to import employees.");
+      alert(
+        error instanceof Error ? error.message : "Failed to import employees."
+      );
     } finally {
       setIsSaving(false);
       e.target.value = "";
@@ -344,7 +375,10 @@ export default function EmployeesPage() {
           </div>
         </div>
 
-        <Section title={editingId !== null ? "Edit Employee" : "Add Employee"} defaultOpen>
+        <Section
+          title={editingId !== null ? "Edit Employee" : "Add Employee"}
+          defaultOpen
+        >
           <div style={{ display: "grid", gap: 16 }}>
             <div style={formGrid}>
               <InputBlock label="Employee Name">
@@ -435,8 +469,20 @@ export default function EmployeesPage() {
         </Section>
 
         <Section title="Import / Tools" defaultOpen>
-          <div style={{ display: "flex", gap: 12, flexWrap: "wrap", alignItems: "center" }}>
-            <label style={{ cursor: isSaving ? "not-allowed" : "pointer", opacity: isSaving ? 0.6 : 1 }}>
+          <div
+            style={{
+              display: "flex",
+              gap: 12,
+              flexWrap: "wrap",
+              alignItems: "center",
+            }}
+          >
+            <label
+              style={{
+                cursor: isSaving ? "not-allowed" : "pointer",
+                opacity: isSaving ? 0.6 : 1,
+              }}
+            >
               <input
                 type="file"
                 accept=".csv"
@@ -444,7 +490,9 @@ export default function EmployeesPage() {
                 style={{ display: "none" }}
                 disabled={isSaving}
               />
-              <span style={buttonStyle}>{isSaving ? "Working..." : "Import Employees"}</span>
+              <span style={buttonStyle}>
+                {isSaving ? "Working..." : "Import Employees"}
+              </span>
             </label>
 
             <button
@@ -504,24 +552,21 @@ export default function EmployeesPage() {
                       <Td colSpan={6}>No employees found.</Td>
                     </tr>
                   ) : (
-                    filteredEmployees
-                      .slice()
-                      .sort((a, b) => a.name.localeCompare(b.name))
-                      .map((employee) => (
-                        <tr key={employee.id}>
-                          <Td>{employee.name}</Td>
-                          <Td>{employee.title || "-"}</Td>
-                          <Td>{employee.email || "-"}</Td>
-                          <Td>{employee.phone || "-"}</Td>
-                          <Td>{employee.isActive ? "Active" : "Inactive"}</Td>
-                          <Td>
-                            <ActionButtons
-                              onEdit={() => handleEditEmployee(employee)}
-                              onDelete={() => handleDeleteEmployee(employee.id)}
-                            />
-                          </Td>
-                        </tr>
-                      ))
+                    filteredEmployees.map((employee) => (
+                      <tr key={employee.id}>
+                        <Td>{employee.name}</Td>
+                        <Td>{employee.title || "-"}</Td>
+                        <Td>{employee.email || "-"}</Td>
+                        <Td>{employee.phone || "-"}</Td>
+                        <Td>{employee.isActive ? "Active" : "Inactive"}</Td>
+                        <Td>
+                          <ActionButtons
+                            onEdit={() => handleEditEmployee(employee)}
+                            onDelete={() => handleDeleteEmployee(employee.id)}
+                          />
+                        </Td>
+                      </tr>
+                    ))
                   )}
                 </tbody>
               </table>

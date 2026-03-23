@@ -83,6 +83,24 @@ function safeNumber(value: unknown, fallback = 0) {
   return Number.isFinite(n) ? n : fallback;
 }
 
+function normalizeEmployeeName(value: unknown) {
+  return safeString(value).toLowerCase();
+}
+
+function cleanEmployees(rows: Employee[]) {
+  return rows
+    .filter((employee) => employee && typeof employee === "object")
+    .filter((employee) => safeString(employee.name))
+    .reduce<Employee[]>((acc, employee) => {
+      const exists = acc.some(
+        (row) => normalizeEmployeeName(row.name) === normalizeEmployeeName(employee.name)
+      );
+      if (!exists) acc.push(employee);
+      return acc;
+    }, [])
+    .sort((a, b) => safeString(a.name).localeCompare(safeString(b.name)));
+}
+
 function isShopLocation(value: string) {
   const normalized = safeString(value).toLowerCase();
   return SHOP_LOCATIONS.some((loc) => loc.toLowerCase() === normalized);
@@ -175,6 +193,7 @@ function getAvailableQty(item: EquipmentItem) {
 
   return 0;
 }
+
 function createEmptyRequestLine(): RequestLineDraft {
   return {
     rowId: Date.now() + Math.floor(Math.random() * 100000),
@@ -216,7 +235,20 @@ export default function JobEquipmentPage() {
     setRequests(parsed?.requests || fallbackData.requests);
     setNotifications(parsed?.notifications || fallbackData.notifications);
     setJobs(parsed?.jobs || fallbackData.jobs);
-    setEmployees(parsed?.employees || fallbackData.employees);
+  }
+
+  async function loadEmployeesFromApi() {
+    try {
+      const response = await fetch("/api/employees", { cache: "no-store" });
+      if (!response.ok) throw new Error("Failed to load employees");
+
+      const rows = await response.json();
+      const data = Array.isArray(rows) ? rows : [];
+      setEmployees(cleanEmployees(data));
+    } catch (error) {
+      console.error("Loading employees failed:", error);
+      setEmployees([]);
+    }
   }
 
   function persistRequestsAndNotifications(
@@ -273,11 +305,23 @@ export default function JobEquipmentPage() {
       }
     }
 
-    loadJobs();
-    refreshFromStorage();
+    async function init() {
+      await loadJobs();
+      refreshFromStorage();
+      await loadEmployeesFromApi();
+    }
 
-    const handleFocus = () => refreshFromStorage();
-    const handleStorage = () => refreshFromStorage();
+    init();
+
+    const handleFocus = () => {
+      refreshFromStorage();
+      loadEmployeesFromApi();
+    };
+
+    const handleStorage = () => {
+      refreshFromStorage();
+      loadEmployeesFromApi();
+    };
 
     window.addEventListener("focus", handleFocus);
     window.addEventListener("storage", handleStorage);
@@ -344,11 +388,8 @@ export default function JobEquipmentPage() {
   );
 
   const employeeOptions = useMemo(() => {
-  return [...employees]
-    .filter((employee) => employee.name?.trim())
-    .sort((a, b) => a.name.localeCompare(b.name))
-    .map((employee) => employee.name);
-}, [employees]);
+    return cleanEmployees(employees).map((employee) => safeString(employee.name));
+  }, [employees]);
 
   const requestCategories = useMemo(() => {
     return Array.from(
@@ -1344,18 +1385,6 @@ const smallButtonStyle: React.CSSProperties = {
   fontSize: 13,
   fontWeight: 700,
   background: "#2a2a2a",
-};
-
-const pickupRowStyle: React.CSSProperties = {
-  display: "grid",
-  gridTemplateColumns: "20px 1fr",
-  gap: 12,
-  alignItems: "start",
-  background: "#141414",
-  border: "1px solid #2f2f2f",
-  borderRadius: 10,
-  padding: 12,
-  cursor: "pointer",
 };
 
 const pickupItemCardStyle: React.CSSProperties = {

@@ -1,10 +1,12 @@
 "use client";
 
+import Link from "next/link";
+import { useParams } from "next/navigation";
 import { useEffect, useMemo, useState } from "react";
-import AppSidebar from "@/components/AppSidebar";
 import { inputStyle } from "@/components/InputBlock";
 import Section from "@/components/Section";
 import StatCard from "@/components/StatCard";
+import EquipmentTable from "@/components/EquipmentTable";
 import RequestsTable from "@/components/RequestsTable";
 
 import type {
@@ -15,21 +17,13 @@ import type {
   Job,
   JobRequest,
   JobRequestLine,
-  Material,
-  PrefabItem,
-  RequestDestinationType,
-  RequestStatus,
-  RequestType,
-  ShopTicket,
-  ToolItem,
 } from "@/types";
 
 const STORAGE_KEY = "prefab-tracker-v7";
-const MASTER_TOOLS_KEY = "master-tool-inventory-v1";
 const MASTER_EQUIPMENT_KEY = "master-equipment-inventory-v1";
-const SHOP_LOCATIONS = ["Shop", "Tool Room", "Yard", "WH1", "WH2"] as const;
+const SHOP_LOCATIONS = ["Tool Room", "Shop", "Yard", "WH1", "WH2"] as const;
 
-const defaultData: AppData = {
+const fallbackData: AppData = {
   jobs: [],
   materials: [],
   prefab: [],
@@ -47,132 +41,23 @@ const defaultData: AppData = {
   employees: [],
 };
 
-type RequestHeaderForm = {
-  destinationType: RequestDestinationType;
-  jobNumber: string;
-  requestedForPerson: string;
-  requestedBy: string;
-  neededBy: string;
-  notes: string;
-  requestFlow: "To Job" | "From Job";
-  fromLocation: string;
-  toLocation: string;
-};
-
-type RequestLineForm = {
-  type: RequestType;
+type RequestLineDraft = {
+  rowId: number;
   category: string;
-  itemName: string;
-  description: string;
+  inventoryItemId: number | "";
   quantity: number;
-  unit: string;
-  inventoryItemId: number | null;
 };
 
-type ItemOption = {
-  value: string;
-  label: string;
-  description: string;
-  category: string;
-  inventoryItemId: number | null;
-};
+function loadStoredAppData(): AppData | null {
+  if (typeof window === "undefined") return null;
 
-function safeString(value: unknown) {
-  return typeof value === "string" ? value.trim() : "";
-}
-
-function uniqueSorted(values: string[]) {
-  return Array.from(new Set(values.filter(Boolean))).sort((a, b) =>
-    a.localeCompare(b)
-  );
-}
-
-function requestDateSafe(value: unknown) {
-  const text = safeString(value);
-  return text || "1970-01-01";
-}
-
-function getNumericId(value: unknown): number | null {
-  if (typeof value === "number" && Number.isFinite(value)) return value;
-  if (typeof value === "string" && value.trim() !== "") {
-    const parsed = Number(value);
-    return Number.isFinite(parsed) ? parsed : null;
-  }
-  return null;
-}
-
-function mergeUniqueById<T extends { id: number }>(items: T[]): T[] {
-  const seen = new Set<number>();
-  const result: T[] = [];
-
-  for (const item of items) {
-    if (!item || typeof item.id !== "number") continue;
-    if (seen.has(item.id)) continue;
-    seen.add(item.id);
-    result.push(item);
-  }
-
-  return result;
-}
-
-function loadStoredAppData(): AppData {
-  if (typeof window === "undefined") return defaultData;
+  const raw = localStorage.getItem(STORAGE_KEY);
+  if (!raw) return null;
 
   try {
-    const raw = localStorage.getItem(STORAGE_KEY);
-    if (!raw) return defaultData;
-
-    const parsed = JSON.parse(raw) as Partial<AppData>;
-
-    return {
-      ...defaultData,
-      ...parsed,
-      jobs: Array.isArray(parsed.jobs) ? parsed.jobs : [],
-      materials: Array.isArray(parsed.materials) ? parsed.materials : [],
-      prefab: Array.isArray(parsed.prefab) ? parsed.prefab : [],
-      toolInventory: Array.isArray(parsed.toolInventory) ? parsed.toolInventory : [],
-      equipmentInventory: Array.isArray(parsed.equipmentInventory)
-        ? parsed.equipmentInventory
-        : [],
-      requests: Array.isArray(parsed.requests) ? parsed.requests : [],
-      notifications: Array.isArray(parsed.notifications)
-        ? parsed.notifications
-        : [],
-      tickets: Array.isArray(parsed.tickets) ? parsed.tickets : [],
-      employees: Array.isArray(parsed.employees) ? parsed.employees : [],
-    };
+    return JSON.parse(raw) as AppData;
   } catch {
-    return defaultData;
-  }
-}
-
-function loadStoredTools(): ToolItem[] {
-  if (typeof window === "undefined") return [];
-
-  try {
-    const appRaw = localStorage.getItem(STORAGE_KEY);
-    const masterRaw = localStorage.getItem(MASTER_TOOLS_KEY);
-
-    const appParsed = appRaw ? JSON.parse(appRaw) : null;
-    const masterParsed = masterRaw ? JSON.parse(masterRaw) : null;
-
-    const appTools = Array.isArray(appParsed?.toolInventory)
-      ? appParsed.toolInventory
-      : [];
-
-    const masterTools = Array.isArray(masterParsed) ? masterParsed : [];
-
-    const normalized = [...appTools, ...masterTools]
-      .map((item) => {
-        const id = getNumericId(item?.id);
-        if (id === null) return null;
-        return { ...item, id } as ToolItem;
-      })
-      .filter((item): item is ToolItem => item !== null);
-
-    return mergeUniqueById(normalized);
-  } catch {
-    return [];
+    return null;
   }
 }
 
@@ -180,567 +65,221 @@ function loadStoredEquipment(): EquipmentItem[] {
   if (typeof window === "undefined") return [];
 
   try {
-    const appRaw = localStorage.getItem(STORAGE_KEY);
-    const masterRaw = localStorage.getItem(MASTER_EQUIPMENT_KEY);
-
-    const appParsed = appRaw ? JSON.parse(appRaw) : null;
-    const masterParsed = masterRaw ? JSON.parse(masterRaw) : null;
-
-    const appEquipment = Array.isArray(appParsed?.equipmentInventory)
-      ? appParsed.equipmentInventory
-      : [];
-
-    const masterEquipment = Array.isArray(masterParsed) ? masterParsed : [];
-
-    const normalized = [...appEquipment, ...masterEquipment]
-      .map((item) => {
-        const id = getNumericId(item?.id);
-        if (id === null) return null;
-        return { ...item, id } as EquipmentItem;
-      })
-      .filter((item): item is EquipmentItem => item !== null);
-
-    return mergeUniqueById(normalized);
+    const raw = localStorage.getItem(MASTER_EQUIPMENT_KEY);
+    if (!raw) return [];
+    const parsed = JSON.parse(raw);
+    return Array.isArray(parsed) ? parsed : [];
   } catch {
     return [];
   }
 }
 
-function saveToolInventory(nextTools: ToolItem[]) {
-  if (typeof window === "undefined") return;
+function safeString(value: unknown) {
+  return typeof value === "string" ? value.trim() : "";
+}
 
-  localStorage.setItem(MASTER_TOOLS_KEY, JSON.stringify(nextTools));
+function normalizeEmployeeName(value: unknown) {
+  return safeString(value).toLowerCase();
+}
 
-  const current = loadStoredAppData();
-  localStorage.setItem(
-    STORAGE_KEY,
-    JSON.stringify({
-      ...current,
-      toolInventory: nextTools,
-    })
+function cleanEmployees(rows: Employee[]) {
+  return rows
+    .filter((employee) => employee && typeof employee === "object")
+    .filter((employee) => safeString(employee.name))
+    .reduce<Employee[]>((acc, employee) => {
+      const exists = acc.some(
+        (row) =>
+          normalizeEmployeeName(row.name) === normalizeEmployeeName(employee.name)
+      );
+      if (!exists) acc.push(employee);
+      return acc;
+    }, [])
+    .sort((a, b) => safeString(a.name).localeCompare(safeString(b.name)));
+}
+
+function safeNumber(value: unknown, fallback = 0) {
+  const n = Number(value);
+  return Number.isFinite(n) ? n : fallback;
+}
+
+function isShopLocation(value: string) {
+  const normalized = safeString(value).toLowerCase();
+  return SHOP_LOCATIONS.some((loc) => loc.toLowerCase() === normalized);
+}
+
+function buildEquipmentLocation(item: EquipmentItem) {
+  if (item.assignmentType === "Tool Room") {
+    return item.toolRoomLocation
+      ? `Tool Room: ${item.toolRoomLocation}`
+      : "Tool Room";
+  }
+
+  if (item.assignmentType === "Shop") return "Shop";
+  if (item.assignmentType === "Yard") return "Yard";
+  if (item.assignmentType === "WH1") return "WH1";
+  if (item.assignmentType === "WH2") return "WH2";
+
+  if (item.assignmentType === "Person") {
+    return item.assignedTo ? `Assigned to ${item.assignedTo}` : "Assigned to person";
+  }
+
+  if (item.assignmentType === "Job") {
+    return item.jobNumber ? `Assigned to job ${item.jobNumber}` : "Assigned to job";
+  }
+
+  return "Unassigned";
+}
+
+function buildEquipmentTitle(item: EquipmentItem) {
+  const assetType = safeString(item.assetType);
+  const assetNumber = safeString(item.assetNumber);
+  const year = safeString(item.year);
+  const manufacturer = safeString(item.manufacturer);
+  const model = safeString(item.model);
+  const description = safeString(item.description);
+
+  return (
+    [
+      assetType,
+      assetNumber,
+      year,
+      manufacturer,
+      model,
+      description && description !== model ? description : "",
+    ]
+      .filter(Boolean)
+      .join(" • ") || "Equipment"
   );
 }
 
-function saveEquipmentInventory(nextEquipment: EquipmentItem[]) {
-  if (typeof window === "undefined") return;
+function buildEquipmentSubtitle(item: EquipmentItem) {
+  const category = safeString(item.category);
+  const itemNumber = safeString(item.itemNumber);
+  const barcode = safeString(item.barcode);
+  const serialNumber = safeString(item.serialNumber);
+  const licensePlate = safeString(item.licensePlate);
+  const vinSerial = safeString(item.vinSerial);
+  const status = safeString(item.status);
 
-  localStorage.setItem(MASTER_EQUIPMENT_KEY, JSON.stringify(nextEquipment));
-
-  const current = loadStoredAppData();
-  localStorage.setItem(
-    STORAGE_KEY,
-    JSON.stringify({
-      ...current,
-      equipmentInventory: nextEquipment,
-    })
-  );
-}
-
-function saveMaterialInventory(nextMaterials: Material[]) {
-  if (typeof window === "undefined") return;
-
-  const current = loadStoredAppData();
-  localStorage.setItem(
-    STORAGE_KEY,
-    JSON.stringify({
-      ...current,
-      materials: nextMaterials,
-    })
-  );
-}
-
-function emptyHeaderForm(): RequestHeaderForm {
-  return {
-    destinationType: "Job",
-    jobNumber: "",
-    requestedForPerson: "",
-    requestedBy: "",
-    neededBy: "",
-    notes: "",
-    requestFlow: "To Job",
-    fromLocation: "Shop",
-    toLocation: "",
-  };
-}
-
-function emptyLineForm(): RequestLineForm {
-  return {
-    type: "Tool",
-    category: "",
-    itemName: "",
-    description: "",
-    quantity: 1,
-    unit: "ea",
-    inventoryItemId: null,
-  };
-}
-
-function makeTicketNumber(type: "Pick" | "Transfer", existing: ShopTicket[]) {
-  const prefix = type === "Pick" ? "PT" : "TT";
-  const count = existing.filter((t) => t.type === type).length + 1;
-  return `${prefix}-${String(count).padStart(4, "0")}`;
-}
-
-function isShopLocation(location: string) {
-  const normalized = safeString(location).toLowerCase();
-  return SHOP_LOCATIONS.some((value) => value.toLowerCase() === normalized);
-}
-
-function isKnownShopLocation(location: string) {
-  return SHOP_LOCATIONS.includes(location as (typeof SHOP_LOCATIONS)[number]);
-}
-
-function isPersonLocation(location: string, employees: Employee[]) {
-  const normalized = safeString(location).toLowerCase();
-  return employees.some(
-    (employee) =>
-      safeString(employee.name).toLowerCase() === normalized
-  );
-}
-
-function makeToolDescription(item: ToolItem) {
   return [
-    safeString(item.category),
-    safeString(item.description),
-    safeString(item.manufacturer),
-    safeString(item.model),
-    safeString(item.itemNumber),
-    safeString(item.barcode),
-    safeString(item.serialNumber),
-    safeString(item.assignmentType),
-    safeString(item.jobNumber),
-    safeString(item.assignedTo),
-    safeString(item.toolRoomLocation),
-  ]
-    .filter(Boolean)
-    .join(" • ");
-}
-
-function makeEquipmentDescription(item: EquipmentItem) {
-  return [
-    safeString(item.assetType),
-    safeString(item.category),
-    safeString(item.description),
-    safeString(item.manufacturer),
-    safeString(item.model),
-    safeString(item.assetNumber),
-    safeString(item.serialNumber),
-    safeString(item.vinSerial),
-    safeString(item.licensePlate),
-    safeString(item.assignmentType),
-    safeString(item.jobNumber),
-    safeString(item.assignedTo),
-    safeString(item.toolRoomLocation),
-  ]
-    .filter(Boolean)
-    .join(" • ");
-}
-
-function makeMaterialDescription(item: Material) {
-  return [
-    safeString(item.category),
-    safeString(item.item),
-    safeString(item.vendor),
-    safeString(item.poNumber),
-    safeString(item.location),
-    safeString(item.job),
-  ]
-    .filter(Boolean)
-    .join(" • ");
-}
-
-function makePrefabDescription(item: PrefabItem) {
-  return [
-    safeString(item.type),
-    safeString(item.assembly),
-    safeString(item.job),
-    safeString(item.area),
-    safeString(item.assignedTo),
-    safeString(item.status),
-  ]
-    .filter(Boolean)
-    .join(" • ");
-}
-
-function resolveEquipmentCategory(
-  item: EquipmentItem
-): "Equipment" | "Trailer" | "Vehicle" {
-  const assetType = safeString(item.assetType).toLowerCase();
-  const category = safeString(item.category).toLowerCase();
-  const description = safeString(item.description).toLowerCase();
-  const assetNumber = safeString(item.assetNumber).toLowerCase();
-  const manufacturer = safeString(item.manufacturer).toLowerCase();
-  const model = safeString(item.model).toLowerCase();
-
-  const combined = [
-    assetType,
     category,
-    description,
-    assetNumber,
-    manufacturer,
-    model,
+    itemNumber ? `Item #: ${itemNumber}` : "",
+    barcode ? `Barcode: ${barcode}` : "",
+    serialNumber ? `Serial: ${serialNumber}` : "",
+    licensePlate ? `Plate: ${licensePlate}` : "",
+    vinSerial ? `VIN/Serial: ${vinSerial}` : "",
+    status ? `Status: ${status}` : "",
   ]
     .filter(Boolean)
-    .join(" ");
-
-  if (assetType === "trailer" || category === "trailer") return "Trailer";
-  if (assetType === "vehicle" || category === "vehicle") return "Vehicle";
-  if (assetType === "equipment" || category === "equipment") return "Equipment";
-
-  if (
-    combined.includes("trailer") ||
-    combined.includes("trailers") ||
-    combined.includes("gooseneck") ||
-    combined.includes("flatbed trailer") ||
-    combined.includes("enclosed trailer") ||
-    combined.includes("dump trailer") ||
-    combined.includes("equipment trailer") ||
-    combined.includes("utility trailer")
-  ) {
-    return "Trailer";
-  }
-
-  if (
-    combined.includes("vehicle") ||
-    combined.includes("truck") ||
-    combined.includes("van") ||
-    combined.includes("pickup") ||
-    combined.includes("car") ||
-    combined.includes("f150") ||
-    combined.includes("f250") ||
-    combined.includes("f350") ||
-    combined.includes("silverado") ||
-    combined.includes("ram 1500") ||
-    combined.includes("ram 2500") ||
-    combined.includes("ram 3500") ||
-    combined.includes("tahoe")
-  ) {
-    return "Vehicle";
-  }
-
-  return "Equipment";
+    .join(" • ");
 }
 
-function isToolAvailable(item: ToolItem) {
-  const assignmentType = safeString(item.assignmentType);
+function getAvailableQty(item: EquipmentItem) {
+  const qty = Math.max(safeNumber(item.quantityAvailable, 0), 0);
 
-  if (
-    assignmentType === "Tool Room" ||
-    assignmentType === "Shop" ||
-    assignmentType === "Yard" ||
-    assignmentType === "WH1" ||
-    assignmentType === "WH2"
-  ) {
-    return true;
+  if (qty > 0) return qty;
+
+  const assetType = safeString(item.assetType).toLowerCase();
+  const hasUniqueIdentity =
+    !!safeString(item.assetNumber) ||
+    !!safeString(item.serialNumber) ||
+    !!safeString(item.vinSerial) ||
+    !!safeString(item.licensePlate);
+
+  const singleAssetTypes = ["vehicle", "trailer", "equipment"];
+
+  if (singleAssetTypes.includes(assetType) || hasUniqueIdentity) {
+    return 1;
   }
 
-  if (isShopLocation(safeString(item.toolRoomLocation))) return true;
-
-  return !safeString(item.jobNumber) && !safeString(item.assignedTo);
+  return 0;
 }
-
-function matchesFromLocationTool(
-  item: ToolItem,
-  fromLocation: string,
-  employees: Employee[]
-) {
-  if (!fromLocation) return true;
-
-  const normalizedFrom = safeString(fromLocation).toLowerCase();
-  const assignmentType = safeString(item.assignmentType).toLowerCase();
-  const toolRoomLocation = safeString(item.toolRoomLocation).toLowerCase();
-  const jobNumber = safeString(item.jobNumber).toLowerCase();
-  const assignedTo = safeString(item.assignedTo).toLowerCase();
-
-  if (isPersonLocation(fromLocation, employees)) {
-    return assignmentType === "person" && assignedTo === normalizedFrom;
-  }
-
-  if (isShopLocation(fromLocation)) {
-    return (
-      assignmentType === normalizedFrom ||
-      toolRoomLocation === normalizedFrom ||
-      jobNumber === normalizedFrom
-    );
-  }
-
-  return jobNumber === normalizedFrom;
-}
-
-function matchesFromLocationEquipment(
-  item: EquipmentItem,
-  fromLocation: string,
-  employees: Employee[]
-) {
-  if (!fromLocation) return true;
-
-  const normalizedFrom = safeString(fromLocation).toLowerCase();
-  const assignmentType = safeString(item.assignmentType).toLowerCase();
-  const toolRoomLocation = safeString(item.toolRoomLocation).toLowerCase();
-  const jobNumber = safeString(item.jobNumber).toLowerCase();
-  const assignedTo = safeString(item.assignedTo).toLowerCase();
-
-  if (isPersonLocation(fromLocation, employees)) {
-    return assignmentType === "person" && assignedTo === normalizedFrom;
-  }
-
-  if (isShopLocation(fromLocation)) {
-    return (
-      assignmentType === normalizedFrom ||
-      toolRoomLocation === normalizedFrom ||
-      jobNumber === normalizedFrom
-    );
-  }
-
-  return jobNumber === normalizedFrom;
-}
-
-function applyToolRequestCompletion(
-  item: ToolItem,
-  request: JobRequest,
-  employees: Employee[]
-): ToolItem {
-  const isPickupFlow = request.requestFlow === "From Job";
-  const toLocation = safeString(request.toLocation);
-  const fromLocation = safeString(request.fromLocation);
-  const today = new Date().toISOString().slice(0, 10);
-
-  if (!isPickupFlow) {
-    if (request.destinationType === "Job") {
-      return {
-        ...item,
-        assignmentType: "Job",
-        jobNumber: safeString(request.jobNumber),
-        assignedTo: "",
-        toolRoomLocation: "",
-        transferDateOut: today,
-        transferDateIn: "",
-      };
-    }
-
-    if (request.destinationType === "Person") {
-      return {
-        ...item,
-        assignmentType: "Person",
-        jobNumber: "",
-        assignedTo: safeString(request.requestedForPerson),
-        toolRoomLocation: "",
-        transferDateOut: today,
-        transferDateIn: "",
-      };
-    }
-
-    return {
-      ...item,
-      assignmentType: "Shop",
-      jobNumber: "",
-      assignedTo: "",
-      toolRoomLocation: "Shop",
-      transferDateOut: today,
-      transferDateIn: "",
-    };
-  }
-
-  if (isKnownShopLocation(toLocation)) {
-    return {
-      ...item,
-      assignmentType: toLocation as ToolItem["assignmentType"],
-      jobNumber: "",
-      assignedTo: "",
-      toolRoomLocation: toLocation,
-      transferDateIn: today,
-    };
-  }
-
-  if (isPersonLocation(toLocation, employees)) {
-    return {
-      ...item,
-      assignmentType: "Person",
-      jobNumber: "",
-      assignedTo: toLocation,
-      toolRoomLocation: "",
-      transferDateIn: today,
-    };
-  }
-
+function createEmptyRequestLine(): RequestLineDraft {
   return {
-    ...item,
-    assignmentType: "Job",
-    jobNumber: toLocation || fromLocation,
-    assignedTo: "",
-    toolRoomLocation: "",
-    transferDateIn: today,
+    rowId: Date.now() + Math.floor(Math.random() * 100000),
+    category: "",
+    inventoryItemId: "",
+    quantity: 1,
   };
 }
 
-function applyEquipmentRequestCompletion(
-  item: EquipmentItem,
-  request: JobRequest,
-  employees: Employee[]
-): EquipmentItem {
-  const isPickupFlow = request.requestFlow === "From Job";
-  const toLocation = safeString(request.toLocation);
-  const fromLocation = safeString(request.fromLocation);
-  const today = new Date().toISOString().slice(0, 10);
+export default function JobEquipmentPage() {
+  const params = useParams<{ jobNumber: string }>();
+  const jobNumber = decodeURIComponent(params.jobNumber);
 
-  if (!isPickupFlow) {
-    if (request.destinationType === "Job") {
-      return {
-        ...item,
-        assignmentType: "Job",
-        jobNumber: safeString(request.jobNumber),
-        assignedTo: "",
-        toolRoomLocation: "",
-        transferDateOut: today,
-        transferDateIn: "",
-      };
-    }
-
-    if (request.destinationType === "Person") {
-      return {
-        ...item,
-        assignmentType: "Person",
-        jobNumber: "",
-        assignedTo: safeString(request.requestedForPerson),
-        toolRoomLocation: "",
-        transferDateOut: today,
-        transferDateIn: "",
-      };
-    }
-
-    return {
-      ...item,
-      assignmentType: "Shop",
-      jobNumber: "",
-      assignedTo: "",
-      toolRoomLocation: "Shop",
-      transferDateOut: today,
-      transferDateIn: "",
-    };
-  }
-
-  if (isKnownShopLocation(toLocation)) {
-    return {
-      ...item,
-      assignmentType: toLocation as EquipmentItem["assignmentType"],
-      jobNumber: "",
-      assignedTo: "",
-      toolRoomLocation: toLocation,
-      transferDateIn: today,
-    };
-  }
-
-  if (isPersonLocation(toLocation, employees)) {
-    return {
-      ...item,
-      assignmentType: "Person",
-      jobNumber: "",
-      assignedTo: toLocation,
-      toolRoomLocation: "",
-      transferDateIn: today,
-    };
-  }
-
-  return {
-    ...item,
-    assignmentType: "Job",
-    jobNumber: toLocation || fromLocation,
-    assignedTo: "",
-    toolRoomLocation: "",
-    transferDateIn: today,
-  };
-}
-
-function applyMaterialRequestCompletion(
-  item: Material,
-  request: JobRequest,
-  employees: Employee[]
-): Material {
-  const isPickupFlow = request.requestFlow === "From Job";
-  const toLocation = safeString(request.toLocation);
-  const fromLocation = safeString(request.fromLocation);
-
-  if (!isPickupFlow) {
-    if (request.destinationType === "Job") {
-      return {
-        ...item,
-        job: safeString(request.jobNumber),
-        location: safeString(request.jobNumber),
-      };
-    }
-
-    if (request.destinationType === "Person") {
-      return {
-        ...item,
-        job: "",
-        location: safeString(request.requestedForPerson),
-      };
-    }
-
-    return {
-      ...item,
-      job: "",
-      location: "Shop",
-    };
-  }
-
-  if (isKnownShopLocation(toLocation)) {
-    return {
-      ...item,
-      job: "",
-      location: toLocation,
-    };
-  }
-
-  if (isPersonLocation(toLocation, employees)) {
-    return {
-      ...item,
-      job: "",
-      location: toLocation,
-    };
-  }
-
-  return {
-    ...item,
-    job: toLocation || fromLocation,
-    location: toLocation || fromLocation,
-  };
-}
-
-export default function RequestsPage() {
   const [jobs, setJobs] = useState<Job[]>([]);
+  const [employees, setEmployees] = useState<Employee[]>([]);
+  const [equipmentInventory, setEquipmentInventory] = useState<EquipmentItem[]>([]);
   const [requests, setRequests] = useState<JobRequest[]>([]);
   const [notifications, setNotifications] = useState<AppNotification[]>([]);
-  const [tickets, setTickets] = useState<ShopTicket[]>([]);
-  const [employees, setEmployees] = useState<Employee[]>([]);
-  const [materials, setMaterials] = useState<Material[]>([]);
-  const [prefab, setPrefab] = useState<PrefabItem[]>([]);
-  const [toolInventory, setToolInventory] = useState<ToolItem[]>([]);
-  const [equipmentInventory, setEquipmentInventory] = useState<EquipmentItem[]>(
-    []
-  );
 
-  const [headerForm, setHeaderForm] =
-    useState<RequestHeaderForm>(emptyHeaderForm());
-  const [lineForm, setLineForm] = useState<RequestLineForm>(emptyLineForm());
-  const [requestLines, setRequestLines] = useState<JobRequestLine[]>([]);
+  const [showRequestForm, setShowRequestForm] = useState(false);
+  const [showPickupForm, setShowPickupForm] = useState(false);
+
+  const [requestLines, setRequestLines] = useState<RequestLineDraft[]>([createEmptyRequestLine()]);
+  const [requestRequestedBy, setRequestRequestedBy] = useState("");
+  const [requestNeededBy, setRequestNeededBy] = useState("");
+  const [requestNotes, setRequestNotes] = useState("");
+
+  const [selectedEquipmentIds, setSelectedEquipmentIds] = useState<number[]>([]);
+  const [selectedEquipmentQtys, setSelectedEquipmentQtys] = useState<Record<number, number>>({});
+  const [pickupRequestedBy, setPickupRequestedBy] = useState("");
+  const [pickupNeededBy, setPickupNeededBy] = useState("");
+  const [pickupToLocation, setPickupToLocation] = useState("Shop");
+  const [pickupNotes, setPickupNotes] = useState("");
 
   function refreshFromStorage() {
     const parsed = loadStoredAppData();
-    setRequests(parsed.requests || []);
-    setNotifications(parsed.notifications || []);
-    setTickets(parsed.tickets || []);
-    setEmployees(parsed.employees || []);
-    setMaterials(parsed.materials || []);
-    setPrefab(parsed.prefab || []);
-    setToolInventory(loadStoredTools());
+
     setEquipmentInventory(loadStoredEquipment());
+    setRequests(parsed?.requests || fallbackData.requests);
+    setNotifications(parsed?.notifications || fallbackData.notifications);
+    setJobs(parsed?.jobs || fallbackData.jobs);
+    setEmployees(parsed?.employees || fallbackData.employees);
+  }
+
+  function persistRequestsAndNotifications(
+    nextRequests: JobRequest[],
+    nextNotifications: AppNotification[]
+  ) {
+    const latest = loadStoredAppData() || fallbackData;
+
+    const updatedData: AppData = {
+      ...latest,
+      requests: nextRequests,
+      notifications: nextNotifications,
+      equipmentInventory: latest.equipmentInventory || [],
+    };
+
+    localStorage.setItem(STORAGE_KEY, JSON.stringify(updatedData));
+
+    setRequests(nextRequests);
+    setNotifications(nextNotifications);
+  }
+
+  function resetRequestForm() {
+    setRequestLines([createEmptyRequestLine()]);
+    setRequestRequestedBy("");
+    setRequestNeededBy("");
+    setRequestNotes("");
+  }
+
+  function resetPickupForm() {
+    setSelectedEquipmentIds([]);
+    setSelectedEquipmentQtys({});
+    setPickupRequestedBy("");
+    setPickupNeededBy("");
+    setPickupToLocation("Shop");
+    setPickupNotes("");
   }
 
   useEffect(() => {
-    const parsed = loadStoredAppData();
+    resetRequestForm();
+    resetPickupForm();
+  }, [jobNumber]);
 
-    async function loadJobsFromApi() {
+  useEffect(() => {
+    async function loadJobs() {
       try {
         const response = await fetch("/api/jobs", { cache: "no-store" });
         if (!response.ok) throw new Error("Failed to load jobs");
@@ -748,12 +287,13 @@ export default function RequestsPage() {
         setJobs(Array.isArray(dbJobs) ? dbJobs : []);
       } catch (error) {
         console.error("Loading jobs failed:", error);
-        setJobs(parsed.jobs || []);
+        const parsed = loadStoredAppData();
+        setJobs(parsed?.jobs || fallbackData.jobs);
       }
     }
 
+    loadJobs();
     refreshFromStorage();
-    loadJobsFromApi();
 
     const handleFocus = () => refreshFromStorage();
     const handleStorage = () => refreshFromStorage();
@@ -765,490 +305,246 @@ export default function RequestsPage() {
       window.removeEventListener("focus", handleFocus);
       window.removeEventListener("storage", handleStorage);
     };
-  }, []);
+  }, [jobNumber]);
 
-  const jobOptions = useMemo(
+  const currentJob = useMemo(
+    () => jobs.find((job) => safeString(job.jobNumber) === safeString(jobNumber)) || null,
+    [jobs, jobNumber]
+  );
+
+  const filteredEquipment = useMemo(
     () =>
-      jobs
-        .map((job) => safeString(job.jobNumber))
-        .filter(Boolean)
-        .sort((a, b) => a.localeCompare(b)),
-    [jobs]
+      equipmentInventory.filter(
+        (item) =>
+          safeString(item.assignmentType) === "Job" &&
+          safeString(item.jobNumber) === safeString(jobNumber)
+      ),
+    [equipmentInventory, jobNumber]
+  );
+
+  const requestableEquipment = useMemo(
+    () =>
+      [...equipmentInventory]
+        .filter((item) => {
+          if (safeString(item.status) !== "Working") return false;
+          const qty = getAvailableQty(item);
+          if (qty < 1) return false;
+
+          const location =
+            safeString(item.toolRoomLocation) ||
+            safeString(item.assignmentType) ||
+            safeString(item.jobNumber);
+
+          return (
+            isShopLocation(location) ||
+            item.assignmentType === "Tool Room" ||
+            item.assignmentType === "Shop" ||
+            item.assignmentType === "Yard" ||
+            item.assignmentType === "WH1" ||
+            item.assignmentType === "WH2"
+          );
+        })
+        .sort((a, b) => {
+          const categoryCompare = safeString(a.category).localeCompare(safeString(b.category));
+          if (categoryCompare !== 0) return categoryCompare;
+          return buildEquipmentTitle(a).localeCompare(buildEquipmentTitle(b));
+        }),
+    [equipmentInventory]
+  );
+
+  const equipmentRequests = useMemo(
+    () =>
+      requests.filter(
+        (item) =>
+          safeString(item.jobNumber) === safeString(jobNumber) &&
+          (item.lines || []).some((line) => line.type === "Equipment")
+      ),
+    [requests, jobNumber]
   );
 
   const employeeOptions = useMemo(() => {
   return [...employees]
-    .map((employee) => safeString(employee.name))
-    .filter(Boolean)
-    .sort((a, b) => a.localeCompare(b));
+    .filter((employee) => employee.name?.trim())
+    .sort((a, b) => a.name.localeCompare(b.name))
+    .map((employee) => employee.name);
 }, [employees]);
 
-  const locationOptions = useMemo(
-    () => uniqueSorted([...SHOP_LOCATIONS, ...jobOptions, ...employeeOptions]),
-    [jobOptions, employeeOptions]
-  );
-
-  const reservedToolIds = useMemo(() => {
-    const ids = new Set<number>();
-
-    for (const request of requests) {
-      if (request.status === "Complete" || request.status === "Rejected") continue;
-      if (request.requestFlow === "From Job") continue;
-
-      for (const line of request.lines || []) {
-        if (line.type === "Tool" && typeof line.inventoryItemId === "number") {
-          ids.add(line.inventoryItemId);
-        }
-      }
-    }
-
-    for (const line of requestLines) {
-      if (line.type === "Tool" && typeof line.inventoryItemId === "number") {
-        ids.add(line.inventoryItemId);
-      }
-    }
-
-    return ids;
-  }, [requests, requestLines]);
-
-  const reservedEquipmentIds = useMemo(() => {
-    const ids = new Set<number>();
-
-    for (const request of requests) {
-      if (request.status === "Complete" || request.status === "Rejected") continue;
-      if (request.requestFlow === "From Job") continue;
-
-      for (const line of request.lines || []) {
-        if (line.type === "Equipment" && typeof line.inventoryItemId === "number") {
-          ids.add(line.inventoryItemId);
-        }
-      }
-    }
-
-    for (const line of requestLines) {
-      if (line.type === "Equipment" && typeof line.inventoryItemId === "number") {
-        ids.add(line.inventoryItemId);
-      }
-    }
-
-    return ids;
-  }, [requests, requestLines]);
-
-  const toolItemOptions = useMemo<ItemOption[]>(() => {
-    const isPickupFlow = headerForm.requestFlow === "From Job";
-    const source = safeString(headerForm.fromLocation);
-
-    return toolInventory
-      .filter((item) =>
-        isPickupFlow
-          ? matchesFromLocationTool(item, source, employees)
-          : isToolAvailable(item)
+  const requestCategories = useMemo(() => {
+    return Array.from(
+      new Set(
+        equipmentInventory
+          .map((item) => safeString(item.category))
+          .filter(Boolean)
       )
-      .filter((item) => (isPickupFlow ? true : !reservedToolIds.has(item.id)))
-      .map((item) => ({
-        value: String(item.id),
-        label:
-          [
-            safeString(item.description),
-            safeString(item.itemNumber),
-            safeString(item.barcode),
-            safeString(item.serialNumber),
-            safeString(item.manufacturer),
-            safeString(item.model),
-          ]
-            .filter(Boolean)
-            .join(" • ") || `Tool ${item.id}`,
-        description: makeToolDescription(item),
-        category: safeString(item.category) || "Tool",
-        inventoryItemId: item.id,
-      }))
-      .sort((a, b) => a.label.localeCompare(b.label));
-  }, [
-    toolInventory,
-    reservedToolIds,
-    headerForm.requestFlow,
-    headerForm.fromLocation,
-    employees,
-  ]);
+    ).sort((a, b) => a.localeCompare(b));
+  }, [equipmentInventory]);
 
-  const equipmentItemOptions = useMemo<ItemOption[]>(() => {
-    const isPickupFlow = headerForm.requestFlow === "From Job";
-    const source = safeString(headerForm.fromLocation);
-
-    return equipmentInventory
-      .filter((item) => {
-        if (isPickupFlow) {
-          return matchesFromLocationEquipment(item, source, employees);
-        }
-        return true;
-      })
-      .filter((item) => (isPickupFlow ? true : !reservedEquipmentIds.has(item.id)))
-      .map((item) => ({
-        value: String(item.id),
-        label:
-          [
-            safeString(item.assetNumber),
-            safeString(item.description),
-            safeString(item.manufacturer),
-            safeString(item.model),
-            safeString(item.licensePlate),
-            safeString(item.serialNumber),
-            safeString(item.vinSerial),
-          ]
-            .filter(Boolean)
-            .join(" • ") || `Asset ${item.id}`,
-        description: makeEquipmentDescription(item),
-        category: resolveEquipmentCategory(item),
-        inventoryItemId: item.id,
-      }))
-      .sort((a, b) => a.label.localeCompare(b.label));
-  }, [
-    equipmentInventory,
-    reservedEquipmentIds,
-    headerForm.requestFlow,
-    headerForm.fromLocation,
-    employees,
-  ]);
-
-  const materialItemOptions = useMemo<ItemOption[]>(() => {
-    const isPickupFlow = headerForm.requestFlow === "From Job";
-    const source = safeString(headerForm.fromLocation).toLowerCase();
-
-    return materials
-      .filter((item) => {
-        if (!isPickupFlow || !source) return true;
-
-        return (
-          safeString(item.job).toLowerCase() === source ||
-          safeString(item.location).toLowerCase() === source
-        );
-      })
-      .map((item) => ({
-        value: String(item.id),
-        label:
-          [
-            safeString(item.item),
-            safeString(item.poNumber),
-            safeString(item.location),
-            safeString(item.vendor),
-          ]
-            .filter(Boolean)
-            .join(" • ") || `Material ${item.id}`,
-        description: makeMaterialDescription(item),
-        category: safeString(item.category) || "Material",
-        inventoryItemId: item.id,
-      }))
-      .sort((a, b) => a.label.localeCompare(b.label));
-  }, [materials, headerForm.requestFlow, headerForm.fromLocation]);
-
-  const prefabItemOptions = useMemo<ItemOption[]>(() => {
-    const isPickupFlow = headerForm.requestFlow === "From Job";
-    const source = safeString(headerForm.fromLocation).toLowerCase();
-
-    return prefab
-      .filter((item) => {
-        if (!isPickupFlow || !source) return true;
-        return safeString(item.job).toLowerCase() === source;
-      })
-      .map((item) => ({
-        value: String(item.id),
-        label:
-          [
-            safeString(item.assembly),
-            safeString(item.job),
-            safeString(item.area),
-            safeString(item.type),
-          ]
-            .filter(Boolean)
-            .join(" • ") || `Prefab ${item.id}`,
-        description: makePrefabDescription(item),
-        category: safeString(item.type) || "Prefab",
-        inventoryItemId: item.id,
-      }))
-      .sort((a, b) => a.label.localeCompare(b.label));
-  }, [prefab, headerForm.requestFlow, headerForm.fromLocation]);
-
-  function getItemOptions(type: RequestType): ItemOption[] {
-    switch (type) {
-      case "Tool":
-        return toolItemOptions;
-      case "Equipment":
-        return equipmentItemOptions;
-      case "Material":
-        return materialItemOptions;
-      case "Prefab":
-        return prefabItemOptions;
-      default:
-        return [];
-    }
-  }
-
-  const categoryOptions = useMemo(() => {
-    if (lineForm.type === "Equipment") {
-      return uniqueSorted(
-        equipmentInventory.map((item) => resolveEquipmentCategory(item))
-      );
-    }
-
-    if (lineForm.type === "Tool") {
-      return uniqueSorted(
-        toolInventory.map((item) => safeString(item.category) || "Tool")
-      );
-    }
-
-    if (lineForm.type === "Material") {
-      return uniqueSorted(
-        materials.map((item) => safeString(item.category) || "Material")
-      );
-    }
-
-    if (lineForm.type === "Prefab") {
-      return uniqueSorted(
-        prefab.map((item) => safeString(item.type) || "Prefab")
-      );
-    }
-
-    return [];
-  }, [lineForm.type, equipmentInventory, toolInventory, materials, prefab]);
-
-  const filteredItemOptions = useMemo(() => {
-    const options = getItemOptions(lineForm.type);
-    if (!lineForm.category) return [];
-
-    return options.filter((item) => item.category === lineForm.category);
-  }, [
-    lineForm.type,
-    lineForm.category,
-    toolItemOptions,
-    equipmentItemOptions,
-    materialItemOptions,
-    prefabItemOptions,
-  ]);
-
-  function getSelectedItem(
-    type: RequestType,
-    category: string,
-    selectedValue: string
-  ) {
-    return getItemOptions(type).find(
-      (item) => item.category === category && item.value === selectedValue
-    );
-  }
-
-  const openRequests = useMemo(
+  const totalQty = useMemo(
     () =>
-      requests.filter(
-        (request) =>
-          request.status !== "Complete" && request.status !== "Rejected"
-      ),
-    [requests]
+      filteredEquipment.reduce((sum, row) => sum + safeNumber(row.quantityAvailable, 0), 0),
+    [filteredEquipment]
   );
 
-  const requestHistory = useMemo(() => {
-    return [...requests]
-      .filter(
-        (request) =>
-          request.status === "Complete" || request.status === "Rejected"
-      )
-      .sort((a, b) => {
-        const aDate = new Date(requestDateSafe(a.requestDate)).getTime();
-        const bDate = new Date(requestDateSafe(b.requestDate)).getTime();
-        return bDate - aDate;
-      });
-  }, [requests]);
-
-  const pickupRequests = useMemo(
-    () => openRequests.filter((request) => request.requestFlow === "From Job"),
-    [openRequests]
+  const assignedToPersonCount = useMemo(
+    () => filteredEquipment.filter((row) => row.assignmentType === "Person").length,
+    [filteredEquipment]
   );
 
-  const standardRequests = useMemo(
-    () => openRequests.filter((request) => request.requestFlow !== "From Job"),
-    [openRequests]
+  const storedCount = useMemo(
+    () =>
+      filteredEquipment.filter(
+        (row) =>
+          row.assignmentType === "Tool Room" ||
+          row.assignmentType === "Shop" ||
+          row.assignmentType === "Yard" ||
+          row.assignmentType === "WH1" ||
+          row.assignmentType === "WH2"
+      ).length,
+    [filteredEquipment]
   );
 
-  const openCount = openRequests.length;
-  const approvedCount = requests.filter(
-    (request) => request.status === "Approved"
-  ).length;
-  const inProgressCount = requests.filter(
-    (request) => request.status === "In Progress"
-  ).length;
-  const completeCount = requests.filter(
-    (request) => request.status === "Complete"
-  ).length;
+  const workingCount = useMemo(
+    () => filteredEquipment.filter((row) => row.status === "Working").length,
+    [filteredEquipment]
+  );
 
-  function saveAll(args: {
-    nextRequests?: JobRequest[];
-    nextNotifications?: AppNotification[];
-    nextTickets?: ShopTicket[];
-  }) {
-    const nextRequests = args.nextRequests ?? requests;
-    const nextNotifications = args.nextNotifications ?? notifications;
-    const nextTickets = args.nextTickets ?? tickets;
+  const damagedCount = useMemo(
+    () => filteredEquipment.filter((row) => row.status === "Damaged").length,
+    [filteredEquipment]
+  );
 
-    setRequests(nextRequests);
-    setNotifications(nextNotifications);
-    setTickets(nextTickets);
-
-    const current = loadStoredAppData();
-    localStorage.setItem(
-      STORAGE_KEY,
-      JSON.stringify({
-        ...current,
-        requests: nextRequests,
-        notifications: nextNotifications,
-        tickets: nextTickets,
-      })
-    );
+  function addRequestLine() {
+    setRequestLines((prev) => [...prev, createEmptyRequestLine()]);
   }
 
-  function createNotification(newRequest: JobRequest, nextRequests: JobRequest[]) {
-    const destinationText =
-      newRequest.destinationType === "Job"
-        ? safeString(newRequest.jobNumber)
-        : newRequest.destinationType === "Person"
-        ? safeString(newRequest.requestedForPerson)
-        : "general request";
-
-    const itemSummary = (newRequest.lines || [])
-      .map((line) => line.itemName)
-      .filter(Boolean)
-      .join(", ");
-
-    const newNotification: AppNotification = {
-      id: Date.now() + Math.floor(Math.random() * 1000),
-      jobNumber: newRequest.jobNumber,
-      requestId: newRequest.id,
-      type: "Request Submitted",
-      title:
-        newRequest.requestFlow === "From Job"
-          ? "Pickup request submitted"
-          : "Request submitted",
-      message: `${itemSummary || "Items"} requested for ${
-        destinationText || "general request"
-      }.`,
-      createdAt: new Date().toISOString(),
-      isRead: false,
-    };
-
-    const nextNotifications = [newNotification, ...notifications];
-    saveAll({ nextRequests, nextNotifications });
-  }
-
-  function addLineItem() {
-    if (!safeString(lineForm.itemName)) {
-      alert("Select an item.");
-      return;
-    }
-
-    const newLine: JobRequestLine = {
-      id: Date.now(),
-      type: lineForm.type,
-      category: safeString(lineForm.category),
-      itemName: safeString(lineForm.itemName),
-      description: safeString(lineForm.description),
-      quantity: Number(lineForm.quantity) || 1,
-      unit: safeString(lineForm.unit) || "ea",
-      inventoryItemId: lineForm.inventoryItemId,
-      inventorySnapshot: "",
-    };
-
-    setRequestLines((prev) => [...prev, newLine]);
-    setLineForm({
-      ...emptyLineForm(),
-      type: lineForm.type,
+  function removeRequestLine(rowId: number) {
+    setRequestLines((prev) => {
+      if (prev.length <= 1) return prev;
+      return prev.filter((line) => line.rowId !== rowId);
     });
   }
 
-  function removeLineItem(id: number) {
-    setRequestLines((prev) => prev.filter((line) => line.id !== id));
+  function updateRequestLine(
+    rowId: number,
+    patch: Partial<RequestLineDraft>,
+    options?: { resetSelection?: boolean }
+  ) {
+    setRequestLines((prev) =>
+      prev.map((line) => {
+        if (line.rowId !== rowId) return line;
+
+        const next: RequestLineDraft = {
+          ...line,
+          ...patch,
+        };
+
+        if (options?.resetSelection) {
+          next.inventoryItemId = "";
+          next.quantity = 1;
+        }
+
+        return next;
+      })
+    );
   }
 
-  function handleCreateRequest() {
-    if (!requestLines.length) {
-      alert("Add at least one line item.");
-      return;
-    }
+  function getLineEquipmentOptions(line: RequestLineDraft) {
+    const category = safeString(line.category);
+    if (!category) return [];
 
-    if (!safeString(headerForm.requestedBy)) {
+    return equipmentInventory
+      .filter((item) => safeString(item.category) === category)
+      .sort((a, b) => buildEquipmentTitle(a).localeCompare(buildEquipmentTitle(b)));
+  }
+
+  function createEquipmentRequest() {
+    if (!safeString(requestRequestedBy)) {
       alert("Select Requested By.");
       return;
     }
 
-    if (
-      headerForm.requestFlow === "From Job" &&
-      !safeString(headerForm.fromLocation)
-    ) {
-      alert("Select From Location.");
+    const cleanedLines = requestLines.filter(
+      (line) => safeString(line.category) || line.inventoryItemId !== ""
+    );
+
+    if (!cleanedLines.length) {
+      alert("Add at least one request line.");
       return;
     }
 
-    if (
-      headerForm.requestFlow === "From Job" &&
-      !safeString(headerForm.toLocation)
-    ) {
-      alert("Select To Location.");
+    const missingCategory = cleanedLines.find((line) => !safeString(line.category));
+    if (missingCategory) {
+      alert("Each request line needs a category.");
       return;
     }
 
-    if (
-      headerForm.requestFlow !== "From Job" &&
-      headerForm.destinationType === "Job" &&
-      !safeString(headerForm.jobNumber)
-    ) {
-      alert("Select a job.");
+    const missingItem = cleanedLines.find((line) => line.inventoryItemId === "");
+    if (missingItem) {
+      alert("Each request line needs an equipment item.");
       return;
     }
 
-    if (
-      headerForm.requestFlow !== "From Job" &&
-      headerForm.destinationType === "Person" &&
-      !safeString(headerForm.requestedForPerson)
-    ) {
-      alert("Select Requested For.");
-      return;
+    const validatedSelections: Array<{
+      line: RequestLineDraft;
+      item: EquipmentItem;
+      qty: number;
+    }> = [];
+
+    const duplicateCheck = new Set<number>();
+
+    for (const line of cleanedLines) {
+      const selectedId = Number(line.inventoryItemId);
+      const item = equipmentInventory.find((row) => Number(row.id) === selectedId);
+
+      if (!item) {
+        alert("One of the selected equipment items is no longer available. Please reselect it.");
+        return;
+      }
+
+      if (duplicateCheck.has(selectedId)) {
+        alert("The same equipment item is selected more than once. Use one line per item.");
+        return;
+      }
+
+      duplicateCheck.add(selectedId);
+
+      const qty = Math.max(1, Number(line.quantity) || 1);
+
+      validatedSelections.push({
+        line,
+        item,
+        qty,
+      });
     }
 
-    const resolvedToLocation =
-      headerForm.requestFlow === "From Job"
-        ? safeString(headerForm.toLocation)
-        : headerForm.destinationType === "Job"
-        ? safeString(headerForm.jobNumber)
-        : headerForm.destinationType === "Person"
-        ? safeString(headerForm.requestedForPerson)
-        : "";
+    const lines: JobRequestLine[] = validatedSelections.map(({ item, qty }, index) => ({
+      id: Date.now() + index + 1,
+      type: "Equipment",
+      category: safeString(item.category),
+      itemName: buildEquipmentTitle(item),
+      description: [buildEquipmentSubtitle(item), buildEquipmentLocation(item)]
+        .filter(Boolean)
+        .join(" | "),
+      quantity: qty,
+      unit: "ea",
+      inventoryItemId: item.id,
+      inventorySnapshot: JSON.stringify(item),
+    }));
 
     const newRequest: JobRequest = {
       id: Date.now(),
-      destinationType:
-        headerForm.requestFlow === "From Job"
-          ? "Job"
-          : headerForm.destinationType,
-      requestFlow: headerForm.requestFlow,
-      jobNumber:
-        headerForm.requestFlow === "From Job"
-          ? safeString(headerForm.fromLocation)
-          : headerForm.destinationType === "Job"
-          ? safeString(headerForm.jobNumber)
-          : "",
-      requestedForPerson:
-        headerForm.requestFlow === "From Job"
-          ? ""
-          : headerForm.destinationType === "Person"
-          ? safeString(headerForm.requestedForPerson)
-          : "",
-      requestedBy: safeString(headerForm.requestedBy),
+      destinationType: "Job",
+      requestFlow: "To Job",
+      jobNumber,
+      requestedForPerson: "",
+      requestedBy: safeString(requestRequestedBy),
       requestDate: new Date().toISOString().slice(0, 10),
-      neededBy: headerForm.neededBy,
+      neededBy: requestNeededBy,
       status: "Open",
-      notes: safeString(headerForm.notes),
-      fromLocation:
-        headerForm.requestFlow === "From Job"
-          ? safeString(headerForm.fromLocation)
-          : "Shop",
-      toLocation: resolvedToLocation,
-      lines: requestLines,
+      notes: safeString(requestNotes),
+      fromLocation: "Shop",
+      toLocation: jobNumber,
+      lines,
       workflowStatus: "Request Submitted",
       pickTicketId: null,
       pickTicketNumber: "",
@@ -1258,373 +554,277 @@ export default function RequestsPage() {
       assignedToJobAt: "",
     };
 
-    const nextRequests = [newRequest, ...requests];
-    createNotification(newRequest, nextRequests);
+    const latest = loadStoredAppData() || fallbackData;
+    const nextRequests = [newRequest, ...(latest.requests || [])];
 
-    setHeaderForm(emptyHeaderForm());
-    setLineForm(emptyLineForm());
-    setRequestLines([]);
+    const newNotification: AppNotification = {
+      id: Date.now() + Math.floor(Math.random() * 1000),
+      jobNumber: newRequest.jobNumber,
+      requestId: newRequest.id,
+      type: "Request Submitted",
+      title: "Equipment request submitted",
+      message:
+        (newRequest.lines || [])
+          .map(
+            (line) => `${line.itemName} (${line.quantity}${line.unit ? ` ${line.unit}` : ""})`
+          )
+          .join(", ") || "Items requested.",
+      createdAt: new Date().toISOString(),
+      isRead: false,
+    };
+
+    const nextNotifications = [newNotification, ...(latest.notifications || [])];
+    persistRequestsAndNotifications(nextRequests, nextNotifications);
+
+    resetRequestForm();
+    setShowRequestForm(false);
   }
 
-  function updateRequestStatus(id: number, status: RequestStatus) {
-    const current = loadStoredAppData();
-    const currentRequests = current.requests || [];
-    const currentTickets = current.tickets || [];
-    const request = currentRequests.find((r) => r.id === id);
-
-    if (!request) return;
-
-    if (status === "In Progress") {
-      if (request.requestFlow === "From Job") {
-        if (request.transferTicketId || request.transferTicketNumber) {
-          const nextRequests = currentRequests.map((item) =>
-            item.id === id ? { ...item, status: "In Progress" as const } : item
-          );
-
-          saveAll({
-            nextRequests,
-            nextNotifications: notifications,
-            nextTickets: currentTickets,
-          });
-          return;
-        }
-
-        const transferTicketNumber = makeTicketNumber("Transfer", currentTickets);
-
-        const newTransferTicket: ShopTicket = {
-          id: Date.now(),
-          ticketNumber: transferTicketNumber,
-          type: "Transfer",
-          jobNumber: request.jobNumber,
-          requestedBy: request.requestedBy,
-          assignedTo: safeString(request.requestedForPerson),
-          requestDate: new Date().toISOString(),
-          neededBy: request.neededBy,
-          status: "Open",
-          notes: request.notes,
-          sourceRequestId: request.id,
-          lines: (request.lines || []).map((line, index) => ({
-            id: Date.now() + index + 1,
-            itemType: line.type,
-            itemId: line.inventoryItemId ?? null,
-            itemName: line.itemName,
-            qty: Number(line.quantity) || 1,
-            unit: line.unit || "ea",
-            fromLocation: request.fromLocation || request.jobNumber || "",
-            toLocation: request.toLocation || "Shop",
-            notes: line.description || request.notes || "",
-          })),
-        };
-
-        const nextTickets = [newTransferTicket, ...currentTickets];
-
-        const nextRequests = currentRequests.map((item) =>
-          item.id === id
-            ? {
-                ...item,
-                status: "In Progress" as const,
-                workflowStatus: "Transfer Ticket Created" as const,
-                transferTicketId: newTransferTicket.id,
-                transferTicketNumber: newTransferTicket.ticketNumber,
-              }
-            : item
-        );
-
-        saveAll({
-          nextRequests,
-          nextNotifications: notifications,
-          nextTickets,
+  function toggleSelectedEquipment(id: number) {
+    setSelectedEquipmentIds((prev) => {
+      if (prev.includes(id)) {
+        const next = prev.filter((value) => value !== id);
+        setSelectedEquipmentQtys((current) => {
+          const updated = { ...current };
+          delete updated[id];
+          return updated;
         });
-        return;
+        return next;
       }
 
-      if (request.pickTicketId || request.pickTicketNumber) {
-        const nextRequests = currentRequests.map((item) =>
-          item.id === id ? { ...item, status: "In Progress" as const } : item
-        );
+      const selectedItem = filteredEquipment.find((item) => item.id === id);
+      const defaultQty = Math.max(Math.min(getAvailableQty(selectedItem as EquipmentItem), 1), 1);
 
-        saveAll({
-          nextRequests,
-          nextNotifications: notifications,
-          nextTickets: currentTickets,
-        });
-        return;
+      setSelectedEquipmentQtys((current) => ({
+        ...current,
+        [id]: defaultQty,
+      }));
+
+      return [...prev, id];
+    });
+  }
+
+  function updateSelectedEquipmentQty(id: number, qty: number) {
+    setSelectedEquipmentQtys((prev) => ({
+      ...prev,
+      [id]: Math.max(1, qty || 1),
+    }));
+  }
+
+  function toggleAllEquipmentForPickup() {
+    const allIds = filteredEquipment.map((item) => item.id);
+
+    setSelectedEquipmentIds((prev) => {
+      if (prev.length === allIds.length) {
+        setSelectedEquipmentQtys({});
+        return [];
       }
 
-      const pickTicketNumber = makeTicketNumber("Pick", currentTickets);
+      const qtyMap: Record<number, number> = {};
+      for (const item of filteredEquipment) {
+        qtyMap[item.id] = Math.max(Math.min(getAvailableQty(item), 1), 1);
+      }
 
-      const destination =
-        request.destinationType === "Job"
-          ? safeString(request.jobNumber)
-          : request.destinationType === "Person"
-          ? safeString(request.requestedForPerson)
-          : "";
+      setSelectedEquipmentQtys(qtyMap);
+      return allIds;
+    });
+  }
 
-      const newPickTicket: ShopTicket = {
-        id: Date.now(),
-        ticketNumber: pickTicketNumber,
-        type: "Pick",
-        jobNumber: request.jobNumber,
-        requestedBy: request.requestedBy,
-        assignedTo: safeString(request.requestedForPerson),
-        requestDate: new Date().toISOString(),
-        neededBy: request.neededBy,
-        status: "Open",
-        notes: request.notes,
-        sourceRequestId: request.id,
-        lines: (request.lines || []).map((line, index) => ({
-          id: Date.now() + index + 1,
-          itemType: line.type,
-          itemId: line.inventoryItemId ?? null,
-          itemName: line.itemName,
-          qty: Number(line.quantity) || 1,
-          unit: line.unit || "ea",
-          fromLocation: "Shop",
-          toLocation: destination,
-          notes: line.description || request.notes || "",
-        })),
-      };
-
-      const nextTickets = [newPickTicket, ...currentTickets];
-
-      const nextRequests = currentRequests.map((item) =>
-        item.id === id
-          ? {
-              ...item,
-              status: "In Progress" as const,
-              workflowStatus: "Pick Ticket Created" as const,
-              pickTicketId: newPickTicket.id,
-              pickTicketNumber: newPickTicket.ticketNumber,
-            }
-          : item
-      );
-
-      saveAll({
-        nextRequests,
-        nextNotifications: notifications,
-        nextTickets,
-      });
+  function createPickupRequest() {
+    if (!selectedEquipmentIds.length) {
+      alert("Select at least one equipment item.");
       return;
     }
 
-    const nextRequests = currentRequests.map((item) => {
-      if (item.id !== id) return item;
-
-      let workflowStatus = item.workflowStatus;
-
-      if (status === "Approved") workflowStatus = "Request Approved";
-      if (status === "Complete") {
-        workflowStatus =
-          item.requestFlow === "From Job"
-            ? "Transfer Ticket Complete"
-            : "Assigned to Job";
-      }
-
-      return {
-        ...item,
-        status,
-        workflowStatus,
-      };
-    });
-
-    if (status === "Complete") {
-      let nextToolInventory = [...toolInventory];
-      let nextEquipmentInventory = [...equipmentInventory];
-      let nextMaterials = [...materials];
-
-      for (const line of request.lines || []) {
-        if (typeof line.inventoryItemId !== "number") continue;
-
-        if (line.type === "Tool") {
-          nextToolInventory = nextToolInventory.map((tool) =>
-            tool.id === line.inventoryItemId
-              ? applyToolRequestCompletion(tool, request, employees)
-              : tool
-          );
-        }
-
-        if (line.type === "Equipment") {
-          nextEquipmentInventory = nextEquipmentInventory.map((equipment) =>
-            equipment.id === line.inventoryItemId
-              ? applyEquipmentRequestCompletion(equipment, request, employees)
-              : equipment
-          );
-        }
-
-        if (line.type === "Material") {
-          nextMaterials = nextMaterials.map((material) =>
-            material.id === line.inventoryItemId
-              ? applyMaterialRequestCompletion(material, request, employees)
-              : material
-          );
-        }
-      }
-
-      saveToolInventory(nextToolInventory);
-      saveEquipmentInventory(nextEquipmentInventory);
-      saveMaterialInventory(nextMaterials);
-
-      setToolInventory(nextToolInventory);
-      setEquipmentInventory(nextEquipmentInventory);
-      setMaterials(nextMaterials);
+    if (!safeString(pickupRequestedBy)) {
+      alert("Select Requested By.");
+      return;
     }
 
-    saveAll({
-      nextRequests,
-      nextNotifications: notifications,
-      nextTickets: currentTickets,
+    const selectedItems = filteredEquipment.filter((item) =>
+      selectedEquipmentIds.includes(item.id)
+    );
+
+    if (!selectedItems.length) {
+      alert("No selected equipment found.");
+      return;
+    }
+
+    const invalidQtyItem = selectedItems.find((item) => {
+      const requestedQty = safeNumber(selectedEquipmentQtys[item.id], 1);
+      const maxQty = getAvailableQty(item);
+      return requestedQty < 1 || requestedQty > maxQty;
     });
+
+    if (invalidQtyItem) {
+      alert(
+        `Requested quantity for ${buildEquipmentTitle(
+          invalidQtyItem
+        )} must be between 1 and ${getAvailableQty(invalidQtyItem)}.`
+      );
+      return;
+    }
+
+    const lines: JobRequestLine[] = selectedItems.map((item, index) => ({
+      id: Date.now() + index + 1,
+      type: "Equipment",
+      category: safeString(item.category),
+      itemName: buildEquipmentTitle(item),
+      description: [buildEquipmentSubtitle(item), buildEquipmentLocation(item)]
+        .filter(Boolean)
+        .join(" | "),
+      quantity: safeNumber(selectedEquipmentQtys[item.id], 1),
+      unit: "ea",
+      inventoryItemId: item.id,
+      inventorySnapshot: JSON.stringify(item),
+    }));
+
+    const newRequest: JobRequest = {
+      id: Date.now(),
+      destinationType: "Job",
+      requestFlow: "From Job",
+      jobNumber,
+      requestedForPerson: "",
+      requestedBy: safeString(pickupRequestedBy),
+      requestDate: new Date().toISOString().slice(0, 10),
+      neededBy: pickupNeededBy,
+      status: "Open",
+      notes: safeString(pickupNotes),
+      fromLocation: jobNumber,
+      toLocation: safeString(pickupToLocation) || "Shop",
+      lines,
+      workflowStatus: "Request Submitted",
+      pickTicketId: null,
+      pickTicketNumber: "",
+      transferTicketId: null,
+      transferTicketNumber: "",
+      deliveredToSiteAt: "",
+      assignedToJobAt: "",
+    };
+
+    const latest = loadStoredAppData() || fallbackData;
+    const nextRequests = [newRequest, ...(latest.requests || [])];
+
+    const newNotification: AppNotification = {
+      id: Date.now() + Math.floor(Math.random() * 1000),
+      jobNumber: newRequest.jobNumber,
+      requestId: newRequest.id,
+      type: "Request Submitted",
+      title: "Equipment pickup request submitted",
+      message:
+        (newRequest.lines || [])
+          .map(
+            (line) => `${line.itemName} (${line.quantity}${line.unit ? ` ${line.unit}` : ""})`
+          )
+          .join(", ") || "Items requested.",
+      createdAt: new Date().toISOString(),
+      isRead: false,
+    };
+
+    const nextNotifications = [newNotification, ...(latest.notifications || [])];
+    persistRequestsAndNotifications(nextRequests, nextNotifications);
+
+    resetPickupForm();
+    setShowPickupForm(false);
   }
 
   return (
     <main style={pageStyle}>
-      <div style={layoutStyle}>
-        <AppSidebar active="requests" />
+      <div style={containerStyle}>
+        <div style={heroStyle}>
+          <div>
+            <Link href={`/jobs/${encodeURIComponent(jobNumber)}`} style={backLinkStyle}>
+              ← Back to Job Dashboard
+            </Link>
 
-        <div style={mainStyle}>
-          <div style={topBarStyle}>
-            <div>
-              <h1 style={{ fontSize: 30, margin: 0, color: "#f5f5f5" }}>
-                Requests
-              </h1>
-              <p style={{ color: "#d1d5db", margin: "6px 0 0 0" }}>
-                Create shop issue requests or pickup and return requests.
-              </p>
+            <h1 style={heroTitleStyle}>Equipment</h1>
+
+            <p style={heroSubtitleStyle}>
+              {jobNumber}
+              {currentJob?.name ? ` • ${currentJob.name}` : ""}
+            </p>
+          </div>
+        </div>
+
+        <div
+          style={{
+            display: "grid",
+            gridTemplateColumns: "repeat(auto-fit, minmax(220px, 1fr))",
+            gap: 16,
+          }}
+        >
+          <StatCard title="Assigned Equipment Rows" value={String(filteredEquipment.length)} />
+          <StatCard
+            title="Master Equipment List Rows"
+            value={String(equipmentInventory.length)}
+          />
+          <StatCard title="Requestable Equipment Rows" value={String(requestableEquipment.length)} />
+          <StatCard title="Total Qty" value={String(totalQty)} />
+          <StatCard title="Assigned to Person" value={String(assignedToPersonCount)} />
+          <StatCard title="Stored / Yard / WH" value={String(storedCount)} />
+          <StatCard title="Working" value={String(workingCount)} />
+          <StatCard title="Damaged" value={String(damagedCount)} />
+        </div>
+
+        <div style={{ marginTop: 4 }}>
+          <JobNavTabs jobNumber={jobNumber} active="equipment" />
+        </div>
+
+        <Section title="Equipment Requests" collapsible defaultOpen>
+          <div style={{ display: "grid", gap: 16 }}>
+            <div style={{ display: "flex", gap: 10, flexWrap: "wrap" }}>
+              <button
+                type="button"
+                onClick={() => {
+                  setShowRequestForm((prev) => !prev);
+                  if (showPickupForm) setShowPickupForm(false);
+                }}
+                style={{
+                  ...requestButtonStyle,
+                  background: showRequestForm ? "#ea580c" : "#c2410c",
+                  border: "1px solid #ea580c",
+                }}
+              >
+                {showRequestForm ? "Close Request Form" : "Request Equipment"}
+              </button>
+
+              <button
+                type="button"
+                onClick={() => {
+                  setShowPickupForm((prev) => !prev);
+                  if (showRequestForm) setShowRequestForm(false);
+                }}
+                style={{
+                  ...requestButtonStyle,
+                  background: showPickupForm ? "#15803d" : "#166534",
+                  border: "1px solid #15803d",
+                }}
+              >
+                {showPickupForm ? "Close Pickup Form" : "Request Pickup from Job"}
+              </button>
             </div>
-          </div>
 
-          <div
-            style={{
-              display: "grid",
-              gridTemplateColumns: "repeat(auto-fit, minmax(220px, 1fr))",
-              gap: 16,
-            }}
-          >
-            <StatCard title="Open Requests" value={String(openCount)} />
-            <StatCard title="Approved" value={String(approvedCount)} />
-            <StatCard title="In Progress" value={String(inProgressCount)} />
-            <StatCard title="Complete" value={String(completeCount)} />
-          </div>
+            {showRequestForm ? (
+              <div style={panelCardStyle}>
+                <div style={{ fontSize: 18, fontWeight: 700, color: "#f5f5f5" }}>
+                  Request Equipment from Master List
+                </div>
 
-          <Section title="Request Header" collapsible defaultOpen>
-            <div style={{ display: "grid", gap: 20 }}>
-              <div style={formGridStyle}>
-                <Field label="Request Flow">
-                  <select
-                    value={headerForm.requestFlow}
-                    onChange={(e) =>
-                      setHeaderForm((prev) => ({
-                        ...prev,
-                        requestFlow: e.target.value as "To Job" | "From Job",
-                        fromLocation:
-                          e.target.value === "From Job" ? prev.fromLocation : "Shop",
-                        toLocation: "",
-                        destinationType:
-                          e.target.value === "From Job" ? "Job" : prev.destinationType,
-                        jobNumber: "",
-                        requestedForPerson: "",
-                      }))
-                    }
-                    style={inputStyle}
-                  >
-                    <option value="To Job">To Job</option>
-                    <option value="From Job">From Job / Pickup</option>
-                  </select>
-                </Field>
+                <div style={{ fontSize: 13, color: "#d1d5db" }}>
+                  Pick a category first, then choose the equipment item from that category.
+                </div>
 
-                <Field label="Destination Type">
-                  <select
-                    value={headerForm.destinationType}
-                    onChange={(e) =>
-                      setHeaderForm((prev) => ({
-                        ...prev,
-                        destinationType: e.target.value as RequestDestinationType,
-                        jobNumber: "",
-                        requestedForPerson: "",
-                        toLocation: "",
-                      }))
-                    }
-                    style={inputStyle}
-                    disabled={headerForm.requestFlow === "From Job"}
-                  >
-                    <option value="Job">Job</option>
-                    <option value="Person">Person</option>
-                    <option value="General">General</option>
-                  </select>
-                </Field>
-
-                {headerForm.requestFlow === "From Job" ? (
-                  <>
-                    <Field label="From Location">
-                      <select
-                        value={headerForm.fromLocation}
-                        onChange={(e) =>
-                          setHeaderForm((prev) => ({
-                            ...prev,
-                            fromLocation: e.target.value,
-                          }))
-                        }
-                        style={inputStyle}
-                      >
-                        <option value="">Select source</option>
-                        {locationOptions.map((location) => (
-                          <option key={`from-${location}`} value={location}>
-                            {location}
-                          </option>
-                        ))}
-                      </select>
-                    </Field>
-
-                    <Field label="To Location">
-                      <select
-                        value={headerForm.toLocation}
-                        onChange={(e) =>
-                          setHeaderForm((prev) => ({
-                            ...prev,
-                            toLocation: e.target.value,
-                          }))
-                        }
-                        style={inputStyle}
-                      >
-                        <option value="">Select destination</option>
-                        {locationOptions.map((location) => (
-                          <option key={`to-${location}`} value={location}>
-                            {location}
-                          </option>
-                        ))}
-                      </select>
-                    </Field>
-                  </>
-                ) : headerForm.destinationType === "Job" ? (
-                  <Field label="Job#">
+                <div
+                  style={{
+                    display: "grid",
+                    gridTemplateColumns: "repeat(auto-fit, minmax(220px, 1fr))",
+                    gap: 12,
+                  }}
+                >
+                  <Field label="Requested By">
                     <select
-                      value={headerForm.jobNumber}
-                      onChange={(e) =>
-                        setHeaderForm((prev) => ({
-                          ...prev,
-                          jobNumber: e.target.value,
-                        }))
-                      }
-                      style={inputStyle}
-                    >
-                      <option value="">Select job</option>
-                      {jobOptions.map((job) => (
-                        <option key={job} value={job}>
-                          {job}
-                        </option>
-                      ))}
-                    </select>
-                  </Field>
-                ) : headerForm.destinationType === "Person" ? (
-                  <Field label="Requested For">
-                    <select
-                      value={headerForm.requestedForPerson}
-                      onChange={(e) =>
-                        setHeaderForm((prev) => ({
-                          ...prev,
-                          requestedForPerson: e.target.value,
-                        }))
-                      }
+                      value={requestRequestedBy}
+                      onChange={(e) => setRequestRequestedBy(e.target.value)}
                       style={inputStyle}
                     >
                       <option value="">Select employee</option>
@@ -1635,279 +835,426 @@ export default function RequestsPage() {
                       ))}
                     </select>
                   </Field>
-                ) : (
-                  <Field label="General Request">
+
+                  <Field label="Needed By">
                     <input
-                      value="No job / no person"
-                      readOnly
-                      style={{ ...inputStyle, background: "#1f1f1f", color: "#d1d5db" }}
+                      type="date"
+                      value={requestNeededBy}
+                      onChange={(e) => setRequestNeededBy(e.target.value)}
+                      style={inputStyle}
                     />
                   </Field>
-                )}
 
-                <Field label="Requested By">
-                  <select
-                    value={headerForm.requestedBy}
-                    onChange={(e) =>
-                      setHeaderForm((prev) => ({
-                        ...prev,
-                        requestedBy: e.target.value,
-                      }))
-                    }
-                    style={inputStyle}
-                  >
-                    <option value="">Select employee</option>
-                    {employeeOptions.map((employee) => (
-                      <option key={employee} value={employee}>
-                        {employee}
-                      </option>
-                    ))}
-                  </select>
-                </Field>
+                  <Field label="Notes">
+                    <input
+                      value={requestNotes}
+                      onChange={(e) => setRequestNotes(e.target.value)}
+                      style={inputStyle}
+                    />
+                  </Field>
+                </div>
 
-                <Field label="Needed By">
-                  <input
-                    type="date"
-                    value={headerForm.neededBy}
-                    onChange={(e) =>
-                      setHeaderForm((prev) => ({
-                        ...prev,
-                        neededBy: e.target.value,
-                      }))
-                    }
-                    style={inputStyle}
-                  />
-                </Field>
+                <div style={{ display: "grid", gap: 12 }}>
+                  {requestLines.map((line, index) => {
+                    const equipmentOptions = getLineEquipmentOptions(line);
+                    const selectedItem =
+                      line.inventoryItemId === ""
+                        ? null
+                        : equipmentInventory.find((item) => item.id === line.inventoryItemId) ||
+                          null;
 
-                <Field label="Notes">
-                  <input
-                    value={headerForm.notes}
-                    onChange={(e) =>
-                      setHeaderForm((prev) => ({
-                        ...prev,
-                        notes: e.target.value,
-                      }))
-                    }
-                    style={inputStyle}
-                  />
-                </Field>
-              </div>
-            </div>
-          </Section>
+                    const maxQty = selectedItem ? Math.max(getAvailableQty(selectedItem), 1) : 1;
 
-          <Section title="Add Request Line" collapsible defaultOpen>
-            <div style={{ display: "grid", gap: 20 }}>
-              <div style={formGridStyle}>
-                <Field label="Request Type">
-                  <select
-                    value={lineForm.type}
-                    onChange={(e) =>
-                      setLineForm({
-                        ...emptyLineForm(),
-                        type: e.target.value as RequestType,
-                      })
-                    }
-                    style={inputStyle}
-                  >
-                    <option value="Tool">Tool</option>
-                    <option value="Equipment">Equipment</option>
-                    <option value="Material">Material</option>
-                    <option value="Prefab">Prefab</option>
-                  </select>
-                </Field>
-
-                <Field label="Category">
-                  <select
-                    value={lineForm.category}
-                    onChange={(e) =>
-                      setLineForm((prev) => ({
-                        ...prev,
-                        category: e.target.value,
-                        itemName: "",
-                        description: "",
-                        inventoryItemId: null,
-                      }))
-                    }
-                    style={inputStyle}
-                  >
-                    <option value="">Select category</option>
-                    {categoryOptions.map((category) => (
-                      <option key={category} value={category}>
-                        {category}
-                      </option>
-                    ))}
-                  </select>
-                </Field>
-
-                <Field label="Item Name">
-                  <select
-                    value={
-                      lineForm.inventoryItemId !== null
-                        ? String(lineForm.inventoryItemId)
-                        : ""
-                    }
-                    onChange={(e) => {
-                      const selectedValue = e.target.value;
-                      const selected = getSelectedItem(
-                        lineForm.type,
-                        lineForm.category,
-                        selectedValue
-                      );
-
-                      setLineForm((prev) => ({
-                        ...prev,
-                        itemName: selected?.label || "",
-                        description: selected?.description || "",
-                        inventoryItemId: selected?.inventoryItemId ?? null,
-                      }));
-                    }}
-                    style={inputStyle}
-                  >
-                    <option value="">Select item</option>
-                    {filteredItemOptions.map((item) => (
-                      <option
-                        key={`${lineForm.type}-${lineForm.category}-${item.value}`}
-                        value={item.value}
-                      >
-                        {item.label}
-                      </option>
-                    ))}
-                  </select>
-                </Field>
-
-                <Field label="Description">
-                  <input
-                    value={lineForm.description}
-                    onChange={(e) =>
-                      setLineForm((prev) => ({
-                        ...prev,
-                        description: e.target.value,
-                      }))
-                    }
-                    style={inputStyle}
-                  />
-                </Field>
-
-                <Field label="Qty">
-                  <input
-                    type="number"
-                    value={String(lineForm.quantity)}
-                    onChange={(e) =>
-                      setLineForm((prev) => ({
-                        ...prev,
-                        quantity: Number(e.target.value) || 0,
-                      }))
-                    }
-                    style={inputStyle}
-                  />
-                </Field>
-
-                <Field label="Unit">
-                  <input
-                    value={lineForm.unit}
-                    onChange={(e) =>
-                      setLineForm((prev) => ({
-                        ...prev,
-                        unit: e.target.value,
-                      }))
-                    }
-                    style={inputStyle}
-                  />
-                </Field>
-              </div>
-
-              <div>
-                <button type="button" onClick={addLineItem} style={actionButtonStyle}>
-                  Add Line Item
-                </button>
-              </div>
-            </div>
-          </Section>
-
-          <Section title="Request Lines" collapsible defaultOpen>
-            {requestLines.length === 0 ? (
-              <div style={{ color: "#a3a3a3" }}>No line items added yet.</div>
-            ) : (
-              <div style={{ display: "grid", gap: 12 }}>
-                {requestLines.map((line) => (
-                  <div key={line.id} style={cardStyle}>
-                    <div style={cardHeaderStyle}>
-                      <div>
+                    return (
+                      <div key={line.rowId} style={lineCardStyle}>
                         <div
                           style={{
-                            fontSize: 18,
-                            fontWeight: 700,
-                            color: "#f5f5f5",
+                            display: "flex",
+                            justifyContent: "space-between",
+                            alignItems: "center",
+                            gap: 12,
+                            flexWrap: "wrap",
                           }}
                         >
-                          {line.itemName}
+                          <div style={{ fontSize: 15, fontWeight: 700, color: "#f5f5f5" }}>
+                            Request Line {index + 1}
+                          </div>
+
+                          <button
+                            type="button"
+                            onClick={() => removeRequestLine(line.rowId)}
+                            disabled={requestLines.length === 1}
+                            style={{
+                              ...smallButtonStyle,
+                              opacity: requestLines.length === 1 ? 0.5 : 1,
+                              cursor: requestLines.length === 1 ? "not-allowed" : "pointer",
+                            }}
+                          >
+                            Remove Line
+                          </button>
                         </div>
-                        <div style={{ fontSize: 14, color: "#d1d5db" }}>
-                          {line.type} • {line.category}
+
+                        <div
+                          style={{
+                            display: "grid",
+                            gridTemplateColumns: "minmax(180px, 1fr) minmax(260px, 2fr) 120px",
+                            gap: 12,
+                          }}
+                        >
+                          <Field label="Category">
+                            <select
+                              value={line.category}
+                              onChange={(e) =>
+                                updateRequestLine(
+                                  line.rowId,
+                                  { category: e.target.value },
+                                  { resetSelection: true }
+                                )
+                              }
+                              style={inputStyle}
+                            >
+                              <option value="">Select category</option>
+                              {requestCategories.map((category) => (
+                                <option key={category} value={category}>
+                                  {category}
+                                </option>
+                              ))}
+                            </select>
+                          </Field>
+
+                          <Field label="Equipment Name">
+                            <select
+                              value={line.inventoryItemId === "" ? "" : String(line.inventoryItemId)}
+                              onChange={(e) =>
+                                updateRequestLine(line.rowId, {
+                                  inventoryItemId: e.target.value ? Number(e.target.value) : "",
+                                  quantity: 1,
+                                })
+                              }
+                              style={inputStyle}
+                              disabled={!line.category}
+                            >
+                              <option value="">
+                                {line.category ? "Select equipment" : "Select category first"}
+                              </option>
+                              {equipmentOptions.map((item) => (
+                                <option key={item.id} value={String(item.id)}>
+                                  {[
+                                    buildEquipmentTitle(item),
+                                    safeString(item.status),
+                                    safeString(item.toolRoomLocation) ||
+                                      safeString(item.assignmentType),
+                                  ]
+                                    .filter(Boolean)
+                                    .join(" • ")}
+                                </option>
+                              ))}
+                            </select>
+                          </Field>
+
+                          <Field label="Qty">
+                            <input
+                              type="number"
+                              min={1}
+                              max={maxQty}
+                              value={line.quantity}
+                              onChange={(e) =>
+                                updateRequestLine(line.rowId, {
+                                  quantity: Math.min(
+                                    Math.max(Number(e.target.value) || 1, 1),
+                                    maxQty
+                                  ),
+                                })
+                              }
+                              style={inputStyle}
+                              disabled={!selectedItem}
+                            />
+                          </Field>
                         </div>
+
+                        {selectedItem ? (
+                          <div style={lineMetaStyle}>
+                            <div>{buildEquipmentSubtitle(selectedItem)}</div>
+                            <div>
+                              Qty Available: {getAvailableQty(selectedItem)} •{" "}
+                              {buildEquipmentLocation(selectedItem)}
+                            </div>
+                          </div>
+                        ) : null}
                       </div>
+                    );
+                  })}
+                </div>
 
-                      <button
-                        type="button"
-                        onClick={() => removeLineItem(line.id)}
-                        style={{ ...smallActionButtonStyle, background: "#7f1d1d", border: "1px solid #991b1b" }}
-                      >
-                        Remove
-                      </button>
-                    </div>
+                <div style={{ display: "flex", gap: 10, flexWrap: "wrap" }}>
+                  <button type="button" onClick={addRequestLine} style={secondaryButtonStyle}>
+                    Add Request Line
+                  </button>
 
-                    <div style={detailsGridStyle}>
-                      <Detail label="Qty" value={`${line.quantity} ${line.unit}`} />
-                      <Detail
-                        label="Inventory ID"
-                        value={String(line.inventoryItemId ?? "-")}
-                      />
-                    </div>
-
-                    {!!line.description && (
-                      <div style={noteBoxStyle}>
-                        <strong>Description:</strong> {line.description}
-                      </div>
-                    )}
-                  </div>
-                ))}
+                  <button
+                    type="button"
+                    onClick={createEquipmentRequest}
+                    style={{
+                      ...requestButtonStyle,
+                      background: "#c2410c",
+                      border: "1px solid #ea580c",
+                    }}
+                  >
+                    Send Equipment Request
+                  </button>
+                </div>
               </div>
-            )}
-          </Section>
+            ) : null}
 
-          <div>
-            <button
-              type="button"
-              onClick={handleCreateRequest}
-              style={actionButtonStyle}
-            >
-              Submit Request
-            </button>
+            {showPickupForm ? (
+              <div style={panelCardStyle}>
+                <div style={{ fontSize: 18, fontWeight: 700, color: "#f5f5f5" }}>
+                  Request Pickup from Job
+                </div>
+
+                <div style={{ fontSize: 13, color: "#d1d5db" }}>
+                  Select one or more equipment items assigned to this job, set the quantity for each,
+                  then send a pickup request.
+                </div>
+
+                <div
+                  style={{
+                    display: "grid",
+                    gridTemplateColumns: "repeat(auto-fit, minmax(220px, 1fr))",
+                    gap: 12,
+                  }}
+                >
+                  <Field label="Requested By">
+                    <select
+                      value={pickupRequestedBy}
+                      onChange={(e) => setPickupRequestedBy(e.target.value)}
+                      style={inputStyle}
+                    >
+                      <option value="">Select employee</option>
+                      {employeeOptions.map((employee) => (
+                        <option key={employee} value={employee}>
+                          {employee}
+                        </option>
+                      ))}
+                    </select>
+                  </Field>
+
+                  <Field label="Needed By">
+                    <input
+                      type="date"
+                      value={pickupNeededBy}
+                      onChange={(e) => setPickupNeededBy(e.target.value)}
+                      style={inputStyle}
+                    />
+                  </Field>
+
+                  <Field label="Return To">
+                    <select
+                      value={pickupToLocation}
+                      onChange={(e) => setPickupToLocation(e.target.value)}
+                      style={inputStyle}
+                    >
+                      <option value="Shop">Shop</option>
+                      <option value="Tool Room">Tool Room</option>
+                      <option value="Yard">Yard</option>
+                      <option value="WH1">WH1</option>
+                      <option value="WH2">WH2</option>
+                    </select>
+                  </Field>
+
+                  <Field label="Notes">
+                    <input
+                      value={pickupNotes}
+                      onChange={(e) => setPickupNotes(e.target.value)}
+                      style={inputStyle}
+                    />
+                  </Field>
+                </div>
+
+                <div style={{ display: "flex", gap: 10, flexWrap: "wrap" }}>
+                  <button
+                    type="button"
+                    onClick={toggleAllEquipmentForPickup}
+                    style={secondaryButtonStyle}
+                  >
+                    {selectedEquipmentIds.length === filteredEquipment.length &&
+                    filteredEquipment.length > 0
+                      ? "Clear Selection"
+                      : "Select All Assigned Equipment"}
+                  </button>
+
+                  <button
+                    type="button"
+                    onClick={createPickupRequest}
+                    style={{
+                      ...requestButtonStyle,
+                      background: "#166534",
+                      border: "1px solid #15803d",
+                    }}
+                  >
+                    Send Pickup Request
+                  </button>
+                </div>
+
+                <div
+                  style={{
+                    display: "grid",
+                    gap: 10,
+                    maxHeight: 420,
+                    overflow: "auto",
+                  }}
+                >
+                  {filteredEquipment.length === 0 ? (
+                    <div style={emptyStateStyle}>No equipment assigned to this job.</div>
+                  ) : (
+                    filteredEquipment.map((item) => {
+                      const checked = selectedEquipmentIds.includes(item.id);
+                      const maxQty = Math.max(getAvailableQty(item), 1);
+                      const qtyValue = selectedEquipmentQtys[item.id] ?? 1;
+
+                      return (
+                        <div key={item.id} style={pickupItemCardStyle}>
+                          <label
+                            style={{
+                              display: "grid",
+                              gridTemplateColumns: "20px 1fr",
+                              gap: 12,
+                              alignItems: "start",
+                              cursor: "pointer",
+                            }}
+                          >
+                            <input
+                              type="checkbox"
+                              checked={checked}
+                              onChange={() => toggleSelectedEquipment(item.id)}
+                            />
+                            <div style={{ display: "grid", gap: 4 }}>
+                              <div style={{ fontWeight: 700, color: "#f5f5f5" }}>
+                                {buildEquipmentTitle(item)}
+                              </div>
+                              <div style={{ fontSize: 13, color: "#d1d5db" }}>
+                                {buildEquipmentSubtitle(item)}
+                              </div>
+                              <div style={{ fontSize: 12, color: "#a3a3a3" }}>
+                                Qty Assigned: {getAvailableQty(item)} •{" "}
+                                {buildEquipmentLocation(item)}
+                              </div>
+                            </div>
+                          </label>
+
+                          {checked ? (
+                            <div
+                              style={{
+                                marginTop: 10,
+                                display: "grid",
+                                gridTemplateColumns: "160px 1fr",
+                                gap: 10,
+                                alignItems: "center",
+                              }}
+                            >
+                              <div style={{ fontSize: 13, color: "#d1d5db", fontWeight: 700 }}>
+                                Pickup Quantity
+                              </div>
+                              <input
+                                type="number"
+                                min={1}
+                                max={maxQty}
+                                value={qtyValue}
+                                onChange={(e) =>
+                                  updateSelectedEquipmentQty(
+                                    item.id,
+                                    Math.min(
+                                      Math.max(Number(e.target.value) || 1, 1),
+                                      maxQty
+                                    )
+                                  )
+                                }
+                                style={inputStyle}
+                              />
+                            </div>
+                          ) : null}
+                        </div>
+                      );
+                    })
+                  )}
+                </div>
+              </div>
+            ) : null}
           </div>
+        </Section>
 
-          <Section title="Open Standard Requests" collapsible defaultOpen>
-            <RequestsTable
-              rows={standardRequests}
-              onUpdateStatus={updateRequestStatus}
-            />
-          </Section>
+        <Section title="Assigned Equipment">
+          <EquipmentTable rows={filteredEquipment} readOnly />
+        </Section>
 
-          <Section title="Open Pickup / Return Requests" collapsible defaultOpen>
-            <RequestsTable
-              rows={pickupRequests}
-              onUpdateStatus={updateRequestStatus}
-            />
-          </Section>
-
-          <Section title="Request History" collapsible defaultOpen={false}>
-            <RequestsTable
-              rows={requestHistory}
-              onUpdateStatus={updateRequestStatus}
-            />
-          </Section>
-        </div>
+        <Section title="Equipment Request History">
+          <RequestsTable rows={equipmentRequests} />
+        </Section>
       </div>
     </main>
+  );
+}
+
+function JobNavTabs({
+  jobNumber,
+  active,
+}: {
+  jobNumber: string;
+  active: "dashboard" | "materials" | "prefab" | "tools" | "equipment";
+}) {
+  const tabs = [
+    {
+      key: "dashboard",
+      label: "Dashboard",
+      href: `/jobs/${encodeURIComponent(jobNumber)}`,
+    },
+    {
+      key: "materials",
+      label: "Materials",
+      href: `/jobs/${encodeURIComponent(jobNumber)}/materials`,
+    },
+    {
+      key: "prefab",
+      label: "Prefab",
+      href: `/jobs/${encodeURIComponent(jobNumber)}/prefab`,
+    },
+    {
+      key: "tools",
+      label: "Tools",
+      href: `/jobs/${encodeURIComponent(jobNumber)}/tools`,
+    },
+    {
+      key: "equipment",
+      label: "Equipment",
+      href: `/jobs/${encodeURIComponent(jobNumber)}/equipment`,
+    },
+  ] as const;
+
+  return (
+    <div style={{ display: "flex", gap: 10, flexWrap: "wrap" }}>
+      {tabs.map((tab) => {
+        const isActive = tab.key === active;
+
+        return (
+          <Link
+            key={tab.key}
+            href={tab.href}
+            style={{
+              textDecoration: "none",
+              padding: "10px 14px",
+              borderRadius: 10,
+              fontSize: 14,
+              fontWeight: 700,
+              background: isActive ? "#c2410c" : "#1a1a1a",
+              color: "white",
+              border: isActive ? "1px solid #ea580c" : "1px solid #2f2f2f",
+            }}
+          >
+            {tab.label}
+          </Link>
+        );
+      })}
+    </div>
   );
 }
 
@@ -1923,10 +1270,10 @@ function Field({
       <label
         style={{
           display: "block",
-          fontSize: 13,
+          marginBottom: 6,
+          fontSize: 14,
           fontWeight: 700,
           color: "#d1d5db",
-          marginBottom: 6,
         }}
       >
         {label}
@@ -1936,115 +1283,133 @@ function Field({
   );
 }
 
-function Detail({ label, value }: { label: string; value: string }) {
-  return (
-    <div style={detailCardStyle}>
-      <div style={{ fontSize: 12, color: "#a3a3a3", marginBottom: 4 }}>
-        {label}
-      </div>
-      <div style={{ fontSize: 14, fontWeight: 700, color: "#f5f5f5" }}>
-        {value || "-"}
-      </div>
-    </div>
-  );
-}
-
 const pageStyle: React.CSSProperties = {
   minHeight: "100vh",
   background: "#111111",
+  padding: "24px",
   fontFamily: "Arial, sans-serif",
   color: "#f5f5f5",
 };
 
-const layoutStyle: React.CSSProperties = {
-  display: "grid",
-  gridTemplateColumns: "280px 1fr",
-  minHeight: "100vh",
-};
-
-const mainStyle: React.CSSProperties = {
-  padding: 24,
+const containerStyle: React.CSSProperties = {
+  maxWidth: "1450px",
+  margin: "0 auto",
   display: "grid",
   gap: 24,
-  background: "#111111",
 };
 
-const topBarStyle: React.CSSProperties = {
+const heroStyle: React.CSSProperties = {
   background: "#1a1a1a",
   border: "1px solid #2f2f2f",
   borderRadius: 16,
   padding: 20,
-  display: "flex",
-  justifyContent: "space-between",
-  gap: 16,
-  flexWrap: "wrap",
-  alignItems: "flex-start",
 };
 
-const formGridStyle: React.CSSProperties = {
+const heroTitleStyle: React.CSSProperties = {
+  fontSize: "32px",
+  margin: 0,
+  color: "#f5f5f5",
+};
+
+const heroSubtitleStyle: React.CSSProperties = {
+  color: "#d1d5db",
+  margin: "8px 0 0 0",
+};
+
+const backLinkStyle: React.CSSProperties = {
+  display: "inline-block",
+  marginBottom: 10,
+  color: "#f97316",
+  textDecoration: "none",
+  fontWeight: 700,
+};
+
+const panelCardStyle: React.CSSProperties = {
   display: "grid",
-  gridTemplateColumns: "repeat(auto-fit, minmax(220px, 1fr))",
-  gap: 14,
-};
-
-const actionButtonStyle: React.CSSProperties = {
-  background: "#c2410c",
-  color: "white",
-  border: "1px solid #ea580c",
-  borderRadius: 10,
-  padding: "12px 16px",
-  cursor: "pointer",
-  fontSize: 14,
-  fontWeight: 700,
-};
-
-const smallActionButtonStyle: React.CSSProperties = {
-  background: "#c2410c",
-  color: "white",
-  border: "1px solid #ea580c",
-  borderRadius: 8,
-  padding: "8px 12px",
-  cursor: "pointer",
-  fontSize: 13,
-  fontWeight: 700,
-};
-
-const cardStyle: React.CSSProperties = {
+  gap: 16,
   background: "#1a1a1a",
   border: "1px solid #2f2f2f",
   borderRadius: 12,
   padding: 16,
-  display: "grid",
-  gap: 14,
-  boxShadow: "0 4px 14px rgba(0, 0, 0, 0.25)",
 };
 
-const cardHeaderStyle: React.CSSProperties = {
-  display: "flex",
-  justifyContent: "space-between",
+const requestButtonStyle: React.CSSProperties = {
+  border: "none",
+  borderRadius: "10px",
+  padding: "12px 16px",
+  color: "white",
+  cursor: "pointer",
+  fontSize: "14px",
+  fontWeight: 700,
+};
+
+const secondaryButtonStyle: React.CSSProperties = {
+  border: "1px solid #3a3a3a",
+  borderRadius: "10px",
+  padding: "12px 16px",
+  color: "white",
+  cursor: "pointer",
+  fontSize: "14px",
+  fontWeight: 700,
+  background: "#2a2a2a",
+};
+
+const smallButtonStyle: React.CSSProperties = {
+  border: "1px solid #3a3a3a",
+  borderRadius: 8,
+  padding: "8px 12px",
+  color: "white",
+  cursor: "pointer",
+  fontSize: 13,
+  fontWeight: 700,
+  background: "#2a2a2a",
+};
+
+const pickupRowStyle: React.CSSProperties = {
+  display: "grid",
+  gridTemplateColumns: "20px 1fr",
   gap: 12,
-  alignItems: "flex-start",
-  flexWrap: "wrap",
+  alignItems: "start",
+  background: "#141414",
+  border: "1px solid #2f2f2f",
+  borderRadius: 10,
+  padding: 12,
+  cursor: "pointer",
 };
 
-const detailsGridStyle: React.CSSProperties = {
+const pickupItemCardStyle: React.CSSProperties = {
   display: "grid",
-  gridTemplateColumns: "repeat(auto-fit, minmax(160px, 1fr))",
   gap: 10,
-};
-
-const detailCardStyle: React.CSSProperties = {
   background: "#141414",
   border: "1px solid #2f2f2f",
   borderRadius: 10,
-  padding: 10,
+  padding: 12,
 };
 
-const noteBoxStyle: React.CSSProperties = {
+const lineCardStyle: React.CSSProperties = {
+  display: "grid",
+  gap: 12,
   background: "#141414",
   border: "1px solid #2f2f2f",
   borderRadius: 10,
+  padding: 14,
+};
+
+const lineMetaStyle: React.CSSProperties = {
+  display: "grid",
+  gap: 4,
+  fontSize: 13,
+  color: "#a3a3a3",
+  background: "#101010",
+  border: "1px solid #262626",
+  borderRadius: 8,
   padding: "10px 12px",
-  fontSize: 14,
-  color: "#d1d5db",
+};
+
+const emptyStateStyle: React.CSSProperties = {
+  background: "#1a1a1a",
+  border: "1px solid #2f2f2f",
+  borderRadius: 10,
+  padding: 16,
+  color: "#a3a3a3",
 };

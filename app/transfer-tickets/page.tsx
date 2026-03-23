@@ -55,6 +55,25 @@ function safeNumber(value: unknown, fallback = 0) {
   return Number.isFinite(n) ? n : fallback;
 }
 
+function normalizeEmployeeName(value: unknown) {
+  return safeString(value).toLowerCase();
+}
+
+function cleanEmployees(rows: Employee[]) {
+  return rows
+    .filter((employee) => employee && typeof employee === "object")
+    .filter((employee) => safeString(employee.name))
+    .reduce<Employee[]>((acc, employee) => {
+      const exists = acc.some(
+        (row) =>
+          normalizeEmployeeName(row.name) === normalizeEmployeeName(employee.name)
+      );
+      if (!exists) acc.push(employee);
+      return acc;
+    }, [])
+    .sort((a, b) => safeString(a.name).localeCompare(safeString(b.name)));
+}
+
 function todayIsoDate() {
   return new Date().toISOString().slice(0, 10);
 }
@@ -76,7 +95,7 @@ function normalizeLocation(location: string) {
 function isPersonLocation(location: string, employees: Employee[]) {
   const normalized = safeString(location).toLowerCase();
   return employees.some(
-    (employee) => employee.name.toLowerCase() === normalized
+    (employee) => normalizeEmployeeName(employee.name) === normalized
   );
 }
 
@@ -268,15 +287,32 @@ export default function TransferTicketsPage() {
   const [lineForm, setLineForm] = useState(emptyLineForm());
   const [draftLines, setDraftLines] = useState<TicketLine[]>([]);
 
-  useEffect(() => {
+  function refreshFromStorage() {
     const parsed = loadStoredAppData();
-    setEmployees(parsed.employees || []);
     setMaterials(parsed.materials);
     setPrefab(parsed.prefab);
     setTickets(parsed.tickets ?? []);
     setRequests(parsed.requests ?? []);
     setToolInventory(loadStoredTools());
     setEquipmentInventory(loadStoredEquipment());
+  }
+
+  async function loadEmployeesFromApi() {
+    try {
+      const response = await fetch("/api/employees", { cache: "no-store" });
+      if (!response.ok) throw new Error("Failed to load employees");
+
+      const rows = await response.json();
+      const data = Array.isArray(rows) ? rows : [];
+      setEmployees(cleanEmployees(data));
+    } catch (error) {
+      console.error("Loading employees failed:", error);
+      setEmployees([]);
+    }
+  }
+
+  useEffect(() => {
+    const parsed = loadStoredAppData();
 
     async function loadJobs() {
       try {
@@ -301,8 +337,32 @@ export default function TransferTicketsPage() {
       }
     }
 
-    loadJobs();
-    loadMaterialsApi();
+    async function init() {
+      refreshFromStorage();
+      await loadJobs();
+      await loadMaterialsApi();
+      await loadEmployeesFromApi();
+    }
+
+    init();
+
+    const handleFocus = () => {
+      refreshFromStorage();
+      loadEmployeesFromApi();
+    };
+
+    const handleStorage = () => {
+      refreshFromStorage();
+      loadEmployeesFromApi();
+    };
+
+    window.addEventListener("focus", handleFocus);
+    window.addEventListener("storage", handleStorage);
+
+    return () => {
+      window.removeEventListener("focus", handleFocus);
+      window.removeEventListener("storage", handleStorage);
+    };
   }, []);
 
   async function reloadMaterialsFromApi() {
@@ -361,11 +421,8 @@ export default function TransferTicketsPage() {
   );
 
   const employeeOptions = useMemo(() => {
-  return [...employees]
-    .filter((employee) => employee.name?.trim())
-    .sort((a, b) => a.name.localeCompare(b.name))
-    .map((employee) => employee.name);
-}, [employees]);
+    return cleanEmployees(employees).map((employee) => safeString(employee.name));
+  }, [employees]);
 
   const locationOptions = useMemo(() => {
     const values = [...SHOP_LOCATIONS, ...jobOptions, ...employeeOptions];
