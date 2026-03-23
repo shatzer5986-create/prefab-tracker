@@ -163,10 +163,9 @@ export default function JobToolsPage() {
   const [requestNeededBy, setRequestNeededBy] = useState("");
   const [requestNotes, setRequestNotes] = useState("");
 
-  const [selectedAssignedToolIds, setSelectedAssignedToolIds] = useState<number[]>([]);
-  const [selectedAssignedToolQtys, setSelectedAssignedToolQtys] = useState<Record<number, number>>(
-    {}
-  );
+  const [pickupFromType, setPickupFromType] = useState<"Job" | "Person">("Job");
+  const [pickupFromPerson, setPickupFromPerson] = useState("");
+  const [pickupLines, setPickupLines] = useState<RequestLineDraft[]>([createEmptyRequestLine()]);
   const [pickupRequestedBy, setPickupRequestedBy] = useState("");
   const [pickupNeededBy, setPickupNeededBy] = useState("");
   const [pickupToLocation, setPickupToLocation] = useState("Shop");
@@ -209,8 +208,9 @@ export default function JobToolsPage() {
   }
 
   function resetPickupForm() {
-    setSelectedAssignedToolIds([]);
-    setSelectedAssignedToolQtys({});
+    setPickupFromType("Job");
+    setPickupFromPerson("");
+    setPickupLines([createEmptyRequestLine()]);
     setPickupRequestedBy("");
     setPickupNeededBy("");
     setPickupToLocation("Shop");
@@ -273,6 +273,26 @@ export default function JobToolsPage() {
     [toolInventory, jobNumber]
   );
 
+  const assignedPersonTools = useMemo(
+    () =>
+      toolInventory.filter(
+        (item) =>
+          safeString(item.assignmentType) === "Person" &&
+          safeString(item.assignedTo)
+      ),
+    [toolInventory]
+  );
+
+  const peopleWithAssignedTools = useMemo(() => {
+    return Array.from(
+      new Set(
+        assignedPersonTools
+          .map((item) => safeString(item.assignedTo))
+          .filter(Boolean)
+      )
+    ).sort((a, b) => a.localeCompare(b));
+  }, [assignedPersonTools]);
+
   const availableTools = useMemo(
     () =>
       [...toolInventory]
@@ -303,33 +323,37 @@ export default function JobToolsPage() {
     [toolInventory]
   );
 
- const requestCategories = useMemo(() => {
-  return Array.from(
-    new Set(
-      toolInventory
-        .map((item) => safeString(item.category))
-        .filter(Boolean)
-    )
-  ).sort((a, b) => a.localeCompare(b));
-}, [toolInventory]);
+  const requestCategories = useMemo(() => {
+    return Array.from(
+      new Set(
+        toolInventory
+          .map((item) => safeString(item.category))
+          .filter(Boolean)
+      )
+    ).sort((a, b) => a.localeCompare(b));
+  }, [toolInventory]);
 
-  const availableToolsByCategory = useMemo(() => {
-    const map = new Map<string, ToolItem[]>();
-
-    for (const item of availableTools) {
-      const category = safeString(item.category) || "Uncategorized";
-      const existing = map.get(category) || [];
-      existing.push(item);
-      map.set(category, existing);
+  const pickupSourceTools = useMemo(() => {
+    if (pickupFromType === "Job") {
+      return assignedTools;
     }
 
-    for (const [key, value] of map.entries()) {
-      value.sort((a, b) => buildToolTitle(a).localeCompare(buildToolTitle(b)));
-      map.set(key, value);
-    }
+    return toolInventory.filter(
+      (item) =>
+        safeString(item.assignmentType) === "Person" &&
+        safeString(item.assignedTo) === safeString(pickupFromPerson)
+    );
+  }, [pickupFromType, pickupFromPerson, assignedTools, toolInventory]);
 
-    return map;
-  }, [availableTools]);
+  const pickupCategories = useMemo(() => {
+    return Array.from(
+      new Set(
+        pickupSourceTools
+          .map((item) => safeString(item.category))
+          .filter(Boolean)
+      )
+    ).sort((a, b) => a.localeCompare(b));
+  }, [pickupSourceTools]);
 
   const toolRequests = useMemo(
     () =>
@@ -365,7 +389,7 @@ export default function JobToolsPage() {
   function updateRequestLine(
     rowId: number,
     patch: Partial<RequestLineDraft>,
-    options?: { resetTool?: boolean }
+    options?: { resetSelection?: boolean }
   ) {
     setRequestLines((prev) =>
       prev.map((line) => {
@@ -376,7 +400,7 @@ export default function JobToolsPage() {
           ...patch,
         };
 
-        if (options?.resetTool) {
+        if (options?.resetSelection) {
           next.inventoryItemId = "";
           next.quantity = 1;
         }
@@ -387,223 +411,119 @@ export default function JobToolsPage() {
   }
 
   function getLineToolOptions(line: RequestLineDraft) {
-  const category = safeString(line.category);
-  if (!category) return [];
+    const category = safeString(line.category);
+    if (!category) return [];
 
-  return toolInventory
-    .filter((item) => safeString(item.category) === category)
-    .sort((a, b) => buildToolTitle(a).localeCompare(buildToolTitle(b)));
-}
-
- function createToolRequest() {
-  if (!safeString(requestRequestedBy)) {
-    alert("Select Requested By.");
-    return;
+    return toolInventory
+      .filter((item) => safeString(item.category) === category)
+      .sort((a, b) => buildToolTitle(a).localeCompare(buildToolTitle(b)));
   }
 
-  const cleanedLines = requestLines.filter(
-    (line) => safeString(line.category) || line.inventoryItemId !== ""
-  );
-
-  if (!cleanedLines.length) {
-    alert("Add at least one request line.");
-    return;
+  function addPickupLine() {
+    setPickupLines((prev) => [...prev, createEmptyRequestLine()]);
   }
 
-  const missingCategory = cleanedLines.find((line) => !safeString(line.category));
-  if (missingCategory) {
-    alert("Each request line needs a category.");
-    return;
-  }
-
-  const missingTool = cleanedLines.find((line) => line.inventoryItemId === "");
-  if (missingTool) {
-    alert("Each request line needs a tool name.");
-    return;
-  }
-
-  const validatedSelections: Array<{
-    line: RequestLineDraft;
-    item: ToolItem;
-    qty: number;
-  }> = [];
-
-  const duplicateCheck = new Set<number>();
-
-  for (const line of cleanedLines) {
-    const selectedId = Number(line.inventoryItemId);
-    const item = toolInventory.find((tool) => Number(tool.id) === selectedId);
-
-    if (!item) {
-      alert("One of the selected tools is no longer available. Please reselect it.");
-      return;
-    }
-
-    if (duplicateCheck.has(selectedId)) {
-      alert("The same tool is selected more than once. Use one line per tool.");
-      return;
-    }
-
-    duplicateCheck.add(selectedId);
-
-    const qty = Math.max(1, Number(line.quantity) || 1);
-
-    validatedSelections.push({
-      line,
-      item,
-      qty,
+  function removePickupLine(rowId: number) {
+    setPickupLines((prev) => {
+      if (prev.length <= 1) return prev;
+      return prev.filter((line) => line.rowId !== rowId);
     });
   }
 
-  const lines: JobRequestLine[] = validatedSelections.map(({ item, qty }, index) => ({
-    id: Date.now() + index + 1,
-    type: "Tool",
-    category: safeString(item.category),
-    itemName: buildToolTitle(item),
-    description: [buildToolSubtitle(item), buildToolLocation(item)]
-      .filter(Boolean)
-      .join(" | "),
-    quantity: qty,
-    unit: "ea",
-    inventoryItemId: item.id,
-    inventorySnapshot: JSON.stringify(item),
-  }));
+  function updatePickupLine(
+    rowId: number,
+    patch: Partial<RequestLineDraft>,
+    options?: { resetSelection?: boolean }
+  ) {
+    setPickupLines((prev) =>
+      prev.map((line) => {
+        if (line.rowId !== rowId) return line;
 
-  const newRequest: JobRequest = {
-    id: Date.now(),
-    destinationType: "Job",
-    requestFlow: "To Job",
-    jobNumber,
-    requestedForPerson: "",
-    requestedBy: safeString(requestRequestedBy),
-    requestDate: new Date().toISOString().slice(0, 10),
-    neededBy: requestNeededBy,
-    status: "Open",
-    notes: safeString(requestNotes),
-    fromLocation: "Shop",
-    toLocation: jobNumber,
-    lines,
-    workflowStatus: "Request Submitted",
-    pickTicketId: null,
-    pickTicketNumber: "",
-    transferTicketId: null,
-    transferTicketNumber: "",
-    deliveredToSiteAt: "",
-    assignedToJobAt: "",
-  };
+        const next: RequestLineDraft = {
+          ...line,
+          ...patch,
+        };
 
-  const latest = loadStoredAppData() || fallbackData;
-  const nextRequests = [newRequest, ...(latest.requests || [])];
+        if (options?.resetSelection) {
+          next.inventoryItemId = "";
+          next.quantity = 1;
+        }
 
-  const newNotification: AppNotification = {
-    id: Date.now() + Math.floor(Math.random() * 1000),
-    jobNumber: newRequest.jobNumber,
-    requestId: newRequest.id,
-    type: "Request Submitted",
-    title: "Tool request submitted",
-    message:
-      (newRequest.lines || [])
-        .map(
-          (line) => `${line.itemName} (${line.quantity}${line.unit ? ` ${line.unit}` : ""})`
-        )
-        .join(", ") || "Items requested.",
-    createdAt: new Date().toISOString(),
-    isRead: false,
-  };
-
-  const nextNotifications = [newNotification, ...(latest.notifications || [])];
-  persistRequestsAndNotifications(nextRequests, nextNotifications);
-
-  resetRequestForm();
-  setShowRequestForm(false);
-}
-
-  function toggleSelectedAssignedTool(id: number) {
-    setSelectedAssignedToolIds((prev) => {
-      if (prev.includes(id)) {
-        const next = prev.filter((value) => value !== id);
-        setSelectedAssignedToolQtys((current) => {
-          const updated = { ...current };
-          delete updated[id];
-          return updated;
-        });
         return next;
-      }
-
-      const selectedItem = assignedTools.find((item) => item.id === id);
-      const defaultQty = Math.max(Math.min(getAvailableQty(selectedItem as ToolItem), 1), 1);
-
-      setSelectedAssignedToolQtys((current) => ({
-        ...current,
-        [id]: defaultQty,
-      }));
-
-      return [...prev, id];
-    });
+      })
+    );
   }
 
-  function updateSelectedAssignedToolQty(id: number, qty: number) {
-    setSelectedAssignedToolQtys((prev) => ({
-      ...prev,
-      [id]: Math.max(1, qty || 1),
-    }));
+  function getPickupToolOptions(line: RequestLineDraft) {
+    const category = safeString(line.category);
+    if (!category) return [];
+
+    return pickupSourceTools
+      .filter((item) => safeString(item.category) === category)
+      .sort((a, b) => buildToolTitle(a).localeCompare(buildToolTitle(b)));
   }
 
-  function toggleAllAssignedTools() {
-    const allIds = assignedTools.map((item) => item.id);
-
-    setSelectedAssignedToolIds((prev) => {
-      if (prev.length === allIds.length) {
-        setSelectedAssignedToolQtys({});
-        return [];
-      }
-
-      const qtyMap: Record<number, number> = {};
-      for (const item of assignedTools) {
-        qtyMap[item.id] = Math.max(Math.min(getAvailableQty(item), 1), 1);
-      }
-
-      setSelectedAssignedToolQtys(qtyMap);
-      return allIds;
-    });
-  }
-
-  function createPickupRequest() {
-    if (!selectedAssignedToolIds.length) {
-      alert("Select at least one assigned tool.");
-      return;
-    }
-
-    if (!safeString(pickupRequestedBy)) {
+  function createToolRequest() {
+    if (!safeString(requestRequestedBy)) {
       alert("Select Requested By.");
       return;
     }
 
-    const selectedItems = assignedTools.filter((item) =>
-      selectedAssignedToolIds.includes(item.id)
+    const cleanedLines = requestLines.filter(
+      (line) => safeString(line.category) || line.inventoryItemId !== ""
     );
 
-    if (!selectedItems.length) {
-      alert("No selected assigned tools found.");
+    if (!cleanedLines.length) {
+      alert("Add at least one request line.");
       return;
     }
 
-    const invalidQtyItem = selectedItems.find((item) => {
-      const requestedQty = safeNumber(selectedAssignedToolQtys[item.id], 1);
-      const maxQty = getAvailableQty(item);
-      return requestedQty < 1 || requestedQty > maxQty;
-    });
-
-    if (invalidQtyItem) {
-      alert(
-        `Requested quantity for ${buildToolTitle(invalidQtyItem)} must be between 1 and ${getAvailableQty(
-          invalidQtyItem
-        )}.`
-      );
+    const missingCategory = cleanedLines.find((line) => !safeString(line.category));
+    if (missingCategory) {
+      alert("Each request line needs a category.");
       return;
     }
 
-    const lines: JobRequestLine[] = selectedItems.map((item, index) => ({
+    const missingTool = cleanedLines.find((line) => line.inventoryItemId === "");
+    if (missingTool) {
+      alert("Each request line needs a tool name.");
+      return;
+    }
+
+    const validatedSelections: Array<{
+      line: RequestLineDraft;
+      item: ToolItem;
+      qty: number;
+    }> = [];
+
+    const duplicateCheck = new Set<number>();
+
+    for (const line of cleanedLines) {
+      const selectedId = Number(line.inventoryItemId);
+      const item = toolInventory.find((tool) => Number(tool.id) === selectedId);
+
+      if (!item) {
+        alert("One of the selected tools is no longer available. Please reselect it.");
+        return;
+      }
+
+      if (duplicateCheck.has(selectedId)) {
+        alert("The same tool is selected more than once. Use one line per tool.");
+        return;
+      }
+
+      duplicateCheck.add(selectedId);
+
+      const qty = Math.max(1, Number(line.quantity) || 1);
+
+      validatedSelections.push({
+        line,
+        item,
+        qty,
+      });
+    }
+
+    const lines: JobRequestLine[] = validatedSelections.map(({ item, qty }, index) => ({
       id: Date.now() + index + 1,
       type: "Tool",
       category: safeString(item.category),
@@ -611,7 +531,7 @@ export default function JobToolsPage() {
       description: [buildToolSubtitle(item), buildToolLocation(item)]
         .filter(Boolean)
         .join(" | "),
-      quantity: safeNumber(selectedAssignedToolQtys[item.id], 1),
+      quantity: qty,
       unit: "ea",
       inventoryItemId: item.id,
       inventorySnapshot: JSON.stringify(item),
@@ -620,15 +540,149 @@ export default function JobToolsPage() {
     const newRequest: JobRequest = {
       id: Date.now(),
       destinationType: "Job",
-      requestFlow: "From Job",
+      requestFlow: "To Job",
       jobNumber,
       requestedForPerson: "",
+      requestedBy: safeString(requestRequestedBy),
+      requestDate: new Date().toISOString().slice(0, 10),
+      neededBy: requestNeededBy,
+      status: "Open",
+      notes: safeString(requestNotes),
+      fromLocation: "Shop",
+      toLocation: jobNumber,
+      lines,
+      workflowStatus: "Request Submitted",
+      pickTicketId: null,
+      pickTicketNumber: "",
+      transferTicketId: null,
+      transferTicketNumber: "",
+      deliveredToSiteAt: "",
+      assignedToJobAt: "",
+    };
+
+    const latest = loadStoredAppData() || fallbackData;
+    const nextRequests = [newRequest, ...(latest.requests || [])];
+
+    const newNotification: AppNotification = {
+      id: Date.now() + Math.floor(Math.random() * 1000),
+      jobNumber: newRequest.jobNumber,
+      requestId: newRequest.id,
+      type: "Request Submitted",
+      title: "Tool request submitted",
+      message:
+        (newRequest.lines || [])
+          .map(
+            (line) => `${line.itemName} (${line.quantity}${line.unit ? ` ${line.unit}` : ""})`
+          )
+          .join(", ") || "Items requested.",
+      createdAt: new Date().toISOString(),
+      isRead: false,
+    };
+
+    const nextNotifications = [newNotification, ...(latest.notifications || [])];
+    persistRequestsAndNotifications(nextRequests, nextNotifications);
+
+    resetRequestForm();
+    setShowRequestForm(false);
+  }
+
+  function createPickupRequest() {
+    if (!safeString(pickupRequestedBy)) {
+      alert("Select Requested By.");
+      return;
+    }
+
+    if (pickupFromType === "Person" && !safeString(pickupFromPerson)) {
+      alert("Select the assigned person.");
+      return;
+    }
+
+    const cleanedLines = pickupLines.filter(
+      (line) => safeString(line.category) || line.inventoryItemId !== ""
+    );
+
+    if (!cleanedLines.length) {
+      alert("Add at least one pickup line.");
+      return;
+    }
+
+    const missingCategory = cleanedLines.find((line) => !safeString(line.category));
+    if (missingCategory) {
+      alert("Each pickup line needs a category.");
+      return;
+    }
+
+    const missingTool = cleanedLines.find((line) => line.inventoryItemId === "");
+    if (missingTool) {
+      alert("Each pickup line needs a tool.");
+      return;
+    }
+
+    const validatedSelections: Array<{
+      item: ToolItem;
+      qty: number;
+    }> = [];
+
+    const duplicateCheck = new Set<number>();
+
+    for (const line of cleanedLines) {
+      const selectedId = Number(line.inventoryItemId);
+      const item = pickupSourceTools.find((tool) => Number(tool.id) === selectedId);
+
+      if (!item) {
+        alert("One of the selected pickup tools is no longer valid. Please reselect it.");
+        return;
+      }
+
+      if (duplicateCheck.has(selectedId)) {
+        alert("The same tool is selected more than once. Use one line per tool.");
+        return;
+      }
+
+      duplicateCheck.add(selectedId);
+
+      const qty = Math.max(1, Number(line.quantity) || 1);
+      const maxQty = getAvailableQty(item);
+
+      if (qty < 1 || qty > maxQty) {
+        alert(`Requested quantity for ${buildToolTitle(item)} must be between 1 and ${maxQty}.`);
+        return;
+      }
+
+      validatedSelections.push({ item, qty });
+    }
+
+    const lines: JobRequestLine[] = validatedSelections.map(({ item, qty }, index) => ({
+      id: Date.now() + index + 1,
+      type: "Tool",
+      category: safeString(item.category),
+      itemName: buildToolTitle(item),
+      description: [buildToolSubtitle(item), buildToolLocation(item)]
+        .filter(Boolean)
+        .join(" | "),
+      quantity: qty,
+      unit: "ea",
+      inventoryItemId: item.id,
+      inventorySnapshot: JSON.stringify(item),
+    }));
+
+    const fromLocation =
+      pickupFromType === "Person"
+        ? `Person: ${safeString(pickupFromPerson)}`
+        : jobNumber;
+
+    const newRequest: JobRequest = {
+      id: Date.now(),
+      destinationType: "Job",
+      requestFlow: "From Job",
+      jobNumber,
+      requestedForPerson: pickupFromType === "Person" ? safeString(pickupFromPerson) : "",
       requestedBy: safeString(pickupRequestedBy),
       requestDate: new Date().toISOString().slice(0, 10),
       neededBy: pickupNeededBy,
       status: "Open",
       notes: safeString(pickupNotes),
-      fromLocation: jobNumber,
+      fromLocation,
       toLocation: safeString(pickupToLocation) || "Shop",
       lines,
       workflowStatus: "Request Submitted",
@@ -696,9 +750,9 @@ export default function JobToolsPage() {
           }}
         >
           <StatCard title="Assigned Tool Records" value={String(assignedTools.length)} />
-<StatCard title="Assigned Quantity" value={String(totalAssignedQty)} />
-<StatCard title="Damaged" value={String(damagedCount)} />
-<StatCard title="Open Tool Requests" value={String(toolRequests.length)} />
+          <StatCard title="Assigned Quantity" value={String(totalAssignedQty)} />
+          <StatCard title="Damaged" value={String(damagedCount)} />
+          <StatCard title="Open Tool Requests" value={String(toolRequests.length)} />
         </div>
 
         <Section title="Tool Requests">
@@ -742,7 +796,7 @@ export default function JobToolsPage() {
                 </div>
 
                 <div style={{ fontSize: 13, color: "#d1d5db" }}>
-                  Pick a category first, then choose the tool name from that category. Each line becomes one request line.
+                  Pick a category first, then choose the tool name from that category.
                 </div>
 
                 <div
@@ -791,7 +845,8 @@ export default function JobToolsPage() {
                     const selectedTool =
                       line.inventoryItemId === ""
                         ? null
-                        : availableTools.find((tool) => tool.id === line.inventoryItemId) || null;
+                        : toolInventory.find((tool) => tool.id === line.inventoryItemId) || null;
+
                     const maxQty = selectedTool ? Math.max(getAvailableQty(selectedTool), 1) : 1;
 
                     return (
@@ -837,13 +892,13 @@ export default function JobToolsPage() {
                                 updateRequestLine(
                                   line.rowId,
                                   { category: e.target.value },
-                                  { resetTool: true }
+                                  { resetSelection: true }
                                 )
                               }
                               style={fieldInputStyle}
                             >
                               <option value="">Select category</option>
-                             {requestCategories.map((category) => (
+                              {requestCategories.map((category) => (
                                 <option key={category} value={category}>
                                   {category}
                                 </option>
@@ -852,33 +907,34 @@ export default function JobToolsPage() {
                           </Field>
 
                           <Field label="Tool Name">
-  <select
-    value={line.inventoryItemId}
-    onChange={(e) =>
-      updateRequestLine(line.rowId, {
-        inventoryItemId: e.target.value ? Number(e.target.value) : "",
-        quantity: 1,
-      })
-    }
-    style={fieldInputStyle}
-    disabled={!line.category}
-  >
-    <option value="">
-      {line.category ? "Select tool" : "Select category first"}
-    </option>
-    {toolOptions.map((item) => (
-      <option key={item.id} value={item.id}>
-        {[
-          buildToolTitle(item),
-          safeString(item.status),
-          safeString(item.toolRoomLocation) || safeString(item.assignmentType),
-        ]
-          .filter(Boolean)
-          .join(" • ")}
-      </option>
-    ))}
-  </select>
-</Field>
+                            <select
+                              value={line.inventoryItemId === "" ? "" : String(line.inventoryItemId)}
+                              onChange={(e) =>
+                                updateRequestLine(line.rowId, {
+                                  inventoryItemId: e.target.value ? Number(e.target.value) : "",
+                                  quantity: 1,
+                                })
+                              }
+                              style={fieldInputStyle}
+                              disabled={!line.category}
+                            >
+                              <option value="">
+                                {line.category ? "Select tool" : "Select category first"}
+                              </option>
+                              {toolOptions.map((item) => (
+                                <option key={item.id} value={String(item.id)}>
+                                  {[
+                                    buildToolTitle(item),
+                                    safeString(item.status),
+                                    safeString(item.toolRoomLocation) ||
+                                      safeString(item.assignmentType),
+                                  ]
+                                    .filter(Boolean)
+                                    .join(" • ")}
+                                </option>
+                              ))}
+                            </select>
+                          </Field>
 
                           <Field label="Qty">
                             <input
@@ -904,7 +960,8 @@ export default function JobToolsPage() {
                           <div style={lineMetaStyle}>
                             <div>{buildToolSubtitle(selectedTool)}</div>
                             <div>
-                              Qty Available: {getAvailableQty(selectedTool)} • {buildToolLocation(selectedTool)}
+                              Qty Available: {getAvailableQty(selectedTool)} •{" "}
+                              {buildToolLocation(selectedTool)}
                             </div>
                           </div>
                         ) : null}
@@ -936,11 +993,12 @@ export default function JobToolsPage() {
             {showPickupForm ? (
               <div style={panelCardStyle}>
                 <div style={{ fontSize: 18, fontWeight: 700, color: "#f5f5f5" }}>
-                  Request Pickup from Job
+                  Request Pickup
                 </div>
 
                 <div style={{ fontSize: 13, color: "#d1d5db" }}>
-                  Select one or more tools assigned to this job, set the quantity for each, then send a pickup request.
+                  Choose whether you are pulling tools from this job or from a specific person.
+                  Categories and tool names only show what is actually assigned to that source.
                 </div>
 
                 <div
@@ -950,6 +1008,42 @@ export default function JobToolsPage() {
                     gap: 12,
                   }}
                 >
+                  <Field label="Pickup From Type">
+                    <select
+                      value={pickupFromType}
+                      onChange={(e) => {
+                        const nextType = e.target.value === "Person" ? "Person" : "Job";
+                        setPickupFromType(nextType);
+                        setPickupFromPerson("");
+                        setPickupLines([createEmptyRequestLine()]);
+                      }}
+                      style={fieldInputStyle}
+                    >
+                      <option value="Job">This Job</option>
+                      <option value="Person">Assigned Person</option>
+                    </select>
+                  </Field>
+
+                  {pickupFromType === "Person" ? (
+                    <Field label="Assigned Person">
+                      <select
+                        value={pickupFromPerson}
+                        onChange={(e) => {
+                          setPickupFromPerson(e.target.value);
+                          setPickupLines([createEmptyRequestLine()]);
+                        }}
+                        style={fieldInputStyle}
+                      >
+                        <option value="">Select person</option>
+                        {peopleWithAssignedTools.map((person) => (
+                          <option key={person} value={person}>
+                            {person}
+                          </option>
+                        ))}
+                      </select>
+                    </Field>
+                  ) : null}
+
                   <Field label="Requested By">
                     <select
                       value={pickupRequestedBy}
@@ -997,15 +1091,145 @@ export default function JobToolsPage() {
                   </Field>
                 </div>
 
+                <div style={{ display: "grid", gap: 12 }}>
+                  {pickupLines.map((line, index) => {
+                    const toolOptions = getPickupToolOptions(line);
+                    const selectedTool =
+                      line.inventoryItemId === ""
+                        ? null
+                        : pickupSourceTools.find((tool) => tool.id === line.inventoryItemId) ||
+                          null;
+
+                    const maxQty = selectedTool ? Math.max(getAvailableQty(selectedTool), 1) : 1;
+
+                    return (
+                      <div key={line.rowId} style={lineCardStyle}>
+                        <div
+                          style={{
+                            display: "flex",
+                            justifyContent: "space-between",
+                            alignItems: "center",
+                            gap: 12,
+                            flexWrap: "wrap",
+                          }}
+                        >
+                          <div style={{ fontSize: 15, fontWeight: 700, color: "#f5f5f5" }}>
+                            Pickup Line {index + 1}
+                          </div>
+
+                          <button
+                            type="button"
+                            onClick={() => removePickupLine(line.rowId)}
+                            disabled={pickupLines.length === 1}
+                            style={{
+                              ...smallButtonStyle,
+                              opacity: pickupLines.length === 1 ? 0.5 : 1,
+                              cursor: pickupLines.length === 1 ? "not-allowed" : "pointer",
+                            }}
+                          >
+                            Remove Line
+                          </button>
+                        </div>
+
+                        <div
+                          style={{
+                            display: "grid",
+                            gridTemplateColumns: "minmax(180px, 1fr) minmax(260px, 2fr) 120px",
+                            gap: 12,
+                          }}
+                        >
+                          <Field label="Category">
+                            <select
+                              value={line.category}
+                              onChange={(e) =>
+                                updatePickupLine(
+                                  line.rowId,
+                                  { category: e.target.value },
+                                  { resetSelection: true }
+                                )
+                              }
+                              style={fieldInputStyle}
+                              disabled={pickupFromType === "Person" && !pickupFromPerson}
+                            >
+                              <option value="">
+                                {pickupFromType === "Person" && !pickupFromPerson
+                                  ? "Select person first"
+                                  : "Select category"}
+                              </option>
+                              {pickupCategories.map((category) => (
+                                <option key={category} value={category}>
+                                  {category}
+                                </option>
+                              ))}
+                            </select>
+                          </Field>
+
+                          <Field label="Tool Name">
+                            <select
+                              value={line.inventoryItemId === "" ? "" : String(line.inventoryItemId)}
+                              onChange={(e) =>
+                                updatePickupLine(line.rowId, {
+                                  inventoryItemId: e.target.value ? Number(e.target.value) : "",
+                                  quantity: 1,
+                                })
+                              }
+                              style={fieldInputStyle}
+                              disabled={!line.category}
+                            >
+                              <option value="">
+                                {line.category ? "Select tool" : "Select category first"}
+                              </option>
+                              {toolOptions.map((item) => (
+                                <option key={item.id} value={String(item.id)}>
+                                  {[
+                                    buildToolTitle(item),
+                                    safeString(item.status),
+                                    buildToolLocation(item),
+                                  ]
+                                    .filter(Boolean)
+                                    .join(" • ")}
+                                </option>
+                              ))}
+                            </select>
+                          </Field>
+
+                          <Field label="Qty">
+                            <input
+                              type="number"
+                              min={1}
+                              max={maxQty}
+                              value={line.quantity}
+                              onChange={(e) =>
+                                updatePickupLine(line.rowId, {
+                                  quantity: Math.min(
+                                    Math.max(Number(e.target.value) || 1, 1),
+                                    maxQty
+                                  ),
+                                })
+                              }
+                              style={fieldInputStyle}
+                              disabled={!selectedTool}
+                            />
+                          </Field>
+                        </div>
+
+                        {selectedTool ? (
+                          <div style={lineMetaStyle}>
+                            <div>{buildToolSubtitle(selectedTool)}</div>
+                            <div>
+                              Qty Assigned: {getAvailableQty(selectedTool)} •{" "}
+                              {buildToolLocation(selectedTool)}
+                            </div>
+                          </div>
+                        ) : null}
+                      </div>
+                    );
+                  })}
+                </div>
+
                 <div style={{ display: "flex", gap: 10, flexWrap: "wrap" }}>
-                  <button
-                    type="button"
-                    onClick={toggleAllAssignedTools}
-                    style={secondaryButtonStyle}
-                  >
-                    {selectedAssignedToolIds.length === assignedTools.length && assignedTools.length > 0
-                      ? "Clear Selection"
-                      : "Select All Assigned Tools"}
+                  <button type="button" onClick={addPickupLine} style={secondaryButtonStyle}>
+                    Add Pickup Line
                   </button>
 
                   <button
@@ -1021,86 +1245,12 @@ export default function JobToolsPage() {
                   </button>
                 </div>
 
-                <div
-                  style={{
-                    display: "grid",
-                    gap: 10,
-                    maxHeight: 420,
-                    overflow: "auto",
-                  }}
-                >
-                  {assignedTools.length === 0 ? (
-                    <div style={emptyStateStyle}>No tools are currently assigned to this job.</div>
-                  ) : (
-                    assignedTools.map((item) => {
-                      const checked = selectedAssignedToolIds.includes(item.id);
-                      const maxQty = Math.max(getAvailableQty(item), 1);
-                      const qtyValue = selectedAssignedToolQtys[item.id] ?? 1;
-
-                      return (
-                        <div key={item.id} style={pickupRowStyle}>
-                          <label
-                            style={{
-                              display: "grid",
-                              gridTemplateColumns: "20px 1fr",
-                              gap: 12,
-                              alignItems: "start",
-                              cursor: "pointer",
-                            }}
-                          >
-                            <input
-                              type="checkbox"
-                              checked={checked}
-                              onChange={() => toggleSelectedAssignedTool(item.id)}
-                            />
-                            <div style={{ display: "grid", gap: 4 }}>
-                              <div style={{ fontWeight: 700, color: "#f5f5f5" }}>
-                                {buildToolTitle(item)}
-                              </div>
-                              <div style={{ fontSize: 13, color: "#d1d5db" }}>
-                                {buildToolSubtitle(item)}
-                              </div>
-                              <div style={{ fontSize: 12, color: "#a3a3a3" }}>
-                                Qty Assigned: {item.quantityAvailable ?? 0} • {buildToolLocation(item)}
-                              </div>
-                            </div>
-                          </label>
-
-                          {checked ? (
-                            <div
-                              style={{
-                                marginTop: 10,
-                                display: "grid",
-                                gridTemplateColumns: "160px 1fr",
-                                gap: 10,
-                                alignItems: "center",
-                              }}
-                            >
-                              <div style={{ fontSize: 13, color: "#d1d5db", fontWeight: 700 }}>
-                                Pickup Quantity
-                              </div>
-                              <input
-                                type="number"
-                                min={1}
-                                max={maxQty}
-                                value={qtyValue}
-                                onChange={(e) =>
-                                  updateSelectedAssignedToolQty(
-                                    item.id,
-                                    Math.min(
-                                      Math.max(Number(e.target.value) || 1, 1),
-                                      maxQty
-                                    )
-                                  )
-                                }
-                                style={qtyInputStyle}
-                              />
-                            </div>
-                          ) : null}
-                        </div>
-                      );
-                    })
-                  )}
+                <div style={emptyStateStyle}>
+                  {pickupSourceTools.length === 0
+                    ? pickupFromType === "Person"
+                      ? "No tools are assigned to that person."
+                      : "No tools are currently assigned to this job."
+                    : `${pickupSourceTools.length} assigned tool record(s) available for pickup.`}
                 </div>
               </div>
             ) : null}
@@ -1365,15 +1515,6 @@ const smallButtonStyle: React.CSSProperties = {
   background: "#2a2a2a",
 };
 
-const pickupRowStyle: React.CSSProperties = {
-  display: "grid",
-  gap: 10,
-  background: "#141414",
-  border: "1px solid #2f2f2f",
-  borderRadius: 10,
-  padding: 12,
-};
-
 const lineCardStyle: React.CSSProperties = {
   display: "grid",
   gap: 12,
@@ -1408,17 +1549,6 @@ const fieldInputStyle: React.CSSProperties = {
   borderRadius: 8,
   border: "1px solid #3a3a3a",
   fontSize: 16,
-  boxSizing: "border-box",
-  background: "#121212",
-  color: "#f5f5f5",
-};
-
-const qtyInputStyle: React.CSSProperties = {
-  width: "100%",
-  padding: "10px 12px",
-  borderRadius: 8,
-  border: "1px solid #3a3a3a",
-  fontSize: 14,
   boxSizing: "border-box",
   background: "#121212",
   color: "#f5f5f5",
