@@ -178,7 +178,18 @@ export default function JobToolsPage() {
     setRequests(parsed?.requests || fallbackData.requests);
     setNotifications(parsed?.notifications || fallbackData.notifications);
     setJobs(parsed?.jobs || fallbackData.jobs);
-    setEmployees(parsed?.employees || fallbackData.employees);
+  }
+
+  async function loadEmployees() {
+    try {
+      const response = await fetch("/api/employees", { cache: "no-store" });
+      if (!response.ok) throw new Error("Failed to load employees");
+      const rows = await response.json();
+      setEmployees(Array.isArray(rows) ? rows : []);
+    } catch (error) {
+      console.error("Loading employees failed:", error);
+      setEmployees([]);
+    }
   }
 
   function persistRequestsAndNotifications(
@@ -237,9 +248,14 @@ export default function JobToolsPage() {
     }
 
     loadJobs();
+    loadEmployees();
     refreshFromStorage();
 
-    const handleFocus = () => refreshFromStorage();
+    const handleFocus = () => {
+      refreshFromStorage();
+      loadEmployees();
+    };
+
     const handleStorage = () => refreshFromStorage();
 
     window.addEventListener("focus", handleFocus);
