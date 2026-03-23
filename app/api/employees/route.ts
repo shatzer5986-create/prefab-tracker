@@ -23,8 +23,9 @@ export async function POST(req: NextRequest) {
 
     const name = String(body.name ?? "").trim();
     const title = String(body.title ?? "").trim();
-    const isActive =
-      typeof body.isActive === "boolean" ? body.isActive : true;
+    const email = String(body.email ?? "").trim();
+    const phone = String(body.phone ?? "").trim();
+    const isActive = body.isActive !== false;
 
     if (!name) {
       return NextResponse.json(
@@ -33,15 +34,33 @@ export async function POST(req: NextRequest) {
       );
     }
 
+    const existing = await prisma.employee.findFirst({
+      where: {
+        name: {
+          equals: name,
+          mode: "insensitive",
+        },
+      },
+    });
+
+    if (existing) {
+      return NextResponse.json(
+        { error: "Employee already exists" },
+        { status: 400 }
+      );
+    }
+
     const employee = await prisma.employee.create({
       data: {
         name,
         title,
+        email,
+        phone,
         isActive,
       },
     });
 
-    return NextResponse.json(employee, { status: 201 });
+    return NextResponse.json(employee);
   } catch (error) {
     console.error("POST /api/employees failed:", error);
     return NextResponse.json(

@@ -1,25 +1,28 @@
 import { NextRequest, NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
 
-type Params = {
+type Context = {
   params: Promise<{ id: string }>;
 };
 
-export async function PUT(req: NextRequest, { params }: Params) {
+export async function PUT(req: NextRequest, { params }: Context) {
   try {
     const { id } = await params;
     const employeeId = Number(id);
-
-    if (!Number.isFinite(employeeId)) {
-      return NextResponse.json({ error: "Invalid employee id" }, { status: 400 });
-    }
-
     const body = await req.json();
+
+    if (!employeeId) {
+      return NextResponse.json(
+        { error: "Invalid employee id" },
+        { status: 400 }
+      );
+    }
 
     const name = String(body.name ?? "").trim();
     const title = String(body.title ?? "").trim();
-    const isActive =
-      typeof body.isActive === "boolean" ? body.isActive : true;
+    const email = String(body.email ?? "").trim();
+    const phone = String(body.phone ?? "").trim();
+    const isActive = body.isActive !== false;
 
     if (!name) {
       return NextResponse.json(
@@ -33,6 +36,8 @@ export async function PUT(req: NextRequest, { params }: Params) {
       data: {
         name,
         title,
+        email,
+        phone,
         isActive,
       },
     });
@@ -47,13 +52,16 @@ export async function PUT(req: NextRequest, { params }: Params) {
   }
 }
 
-export async function DELETE(_: NextRequest, { params }: Params) {
+export async function DELETE(_: NextRequest, { params }: Context) {
   try {
     const { id } = await params;
     const employeeId = Number(id);
 
-    if (!Number.isFinite(employeeId)) {
-      return NextResponse.json({ error: "Invalid employee id" }, { status: 400 });
+    if (!employeeId) {
+      return NextResponse.json(
+        { error: "Invalid employee id" },
+        { status: 400 }
+      );
     }
 
     await prisma.employee.delete({
