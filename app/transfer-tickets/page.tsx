@@ -76,7 +76,7 @@ function normalizeLocation(location: string) {
 function isPersonLocation(location: string, employees: Employee[]) {
   const normalized = safeString(location).toLowerCase();
   return employees.some(
-    (employee) => employee.isActive && employee.name.toLowerCase() === normalized
+    (employee) => employee.name.toLowerCase() === normalized
   );
 }
 
@@ -361,11 +361,11 @@ export default function TransferTicketsPage() {
   );
 
   const employeeOptions = useMemo(() => {
-    return [...employees]
-      .filter((employee) => employee.isActive)
-      .sort((a, b) => a.name.localeCompare(b.name))
-      .map((employee) => employee.name);
-  }, [employees]);
+  return [...employees]
+    .filter((employee) => employee.name?.trim())
+    .sort((a, b) => a.name.localeCompare(b.name))
+    .map((employee) => employee.name);
+}, [employees]);
 
   const locationOptions = useMemo(() => {
     const values = [...SHOP_LOCATIONS, ...jobOptions, ...employeeOptions];

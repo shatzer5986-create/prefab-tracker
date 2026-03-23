@@ -294,7 +294,7 @@ function isPersonLocation(location: string, employees: Employee[]) {
   const normalized = safeString(location).toLowerCase();
   return employees.some(
     (employee) =>
-      employee.isActive && safeString(employee.name).toLowerCase() === normalized
+      safeString(employee.name).toLowerCase() === normalized
   );
 }
 
@@ -777,12 +777,11 @@ export default function RequestsPage() {
   );
 
   const employeeOptions = useMemo(() => {
-    return [...employees]
-      .filter((employee) => employee.isActive)
-      .map((employee) => safeString(employee.name))
-      .filter(Boolean)
-      .sort((a, b) => a.localeCompare(b));
-  }, [employees]);
+  return [...employees]
+    .map((employee) => safeString(employee.name))
+    .filter(Boolean)
+    .sort((a, b) => a.localeCompare(b));
+}, [employees]);
 
   const locationOptions = useMemo(
     () => uniqueSorted([...SHOP_LOCATIONS, ...jobOptions, ...employeeOptions]),

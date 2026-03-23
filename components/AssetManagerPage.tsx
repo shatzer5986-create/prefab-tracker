@@ -349,11 +349,11 @@ export default function AssetManagerPage({
   }, [jobs]);
 
   const employeeOptions = useMemo(() => {
-    return [...employees]
-      .filter((employee) => employee.isActive)
-      .sort((a, b) => a.name.localeCompare(b.name))
-      .map((employee) => employee.name);
-  }, [employees]);
+  return [...employees]
+    .filter((employee) => employee.name?.trim())
+    .sort((a, b) => a.name.localeCompare(b.name))
+    .map((employee) => employee.name);
+}, [employees]);
 
   const rows = useMemo(
     () => allAssets.filter((item) => item.assetType === assetType),

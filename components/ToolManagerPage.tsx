@@ -211,11 +211,11 @@ export default function ToolManagerPage() {
   }, [jobs]);
 
   const employeeOptions = useMemo(() => {
-    return [...employees]
-      .filter((employee) => employee.isActive)
-      .map((employee) => employee.name)
-      .sort((a, b) => a.localeCompare(b));
-  }, [employees]);
+  return [...employees]
+    .map((employee) => employee.name)
+    .filter((name) => name?.trim())
+    .sort((a, b) => a.localeCompare(b));
+}, [employees]);
 
   const assignedCount = useMemo(
     () =>

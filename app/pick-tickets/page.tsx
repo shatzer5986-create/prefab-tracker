@@ -198,11 +198,11 @@ export default function PickTicketsPage() {
   );
 
   const employeeOptions = useMemo(() => {
-    return [...employees]
-      .filter((employee) => employee.isActive)
-      .sort((a, b) => a.name.localeCompare(b.name))
-      .map((employee) => employee.name);
-  }, [employees]);
+  return [...employees]
+    .filter((employee) => employee.name?.trim())
+    .sort((a, b) => a.name.localeCompare(b.name))
+    .map((employee) => employee.name);
+}, [employees]);
 
   const locationOptions = useMemo(() => {
     const values = [...SHOP_LOCATIONS, ...jobOptions, ...employeeOptions];

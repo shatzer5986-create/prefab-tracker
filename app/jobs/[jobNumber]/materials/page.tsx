@@ -259,11 +259,11 @@ export default function JobMaterialsPage() {
   );
 
   const employeeOptions = useMemo(() => {
-    return [...employees]
-      .filter((employee) => employee.isActive)
-      .sort((a, b) => a.name.localeCompare(b.name))
-      .map((employee) => employee.name);
-  }, [employees]);
+  return [...employees]
+    .filter((employee) => employee.name?.trim())
+    .sort((a, b) => a.name.localeCompare(b.name))
+    .map((employee) => employee.name);
+}, [employees]);
 
   const totalOrdered = useMemo(
     () => allJobMaterials.reduce((sum, row) => sum + Number(row.orderedQty || 0), 0),

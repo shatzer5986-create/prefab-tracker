@@ -344,11 +344,11 @@ export default function JobEquipmentPage() {
   );
 
   const employeeOptions = useMemo(() => {
-    return [...employees]
-      .filter((employee) => employee.isActive)
-      .sort((a, b) => a.name.localeCompare(b.name))
-      .map((employee) => employee.name);
-  }, [employees]);
+  return [...employees]
+    .filter((employee) => employee.name?.trim())
+    .sort((a, b) => a.name.localeCompare(b.name))
+    .map((employee) => employee.name);
+}, [employees]);
 
   const requestCategories = useMemo(() => {
     return Array.from(
