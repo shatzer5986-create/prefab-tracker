@@ -152,8 +152,7 @@ function buildEquipmentLocation(item: EquipmentItem) {
 }
 
 function getAvailableQty(item: EquipmentItem) {
-  const qty =
-    safeNumber((item as any).quantityAvailable, NaN);
+  const qty = safeNumber((item as any).quantityAvailable, NaN);
 
   if (Number.isFinite(qty)) return Math.max(qty, 0);
 
@@ -212,6 +211,8 @@ export default function JobEquipmentPage() {
   const [showRequestForm, setShowRequestForm] = useState(false);
   const [showPickupForm, setShowPickupForm] = useState(false);
 
+  const [requestDestinationType, setRequestDestinationType] = useState<"Job" | "Person">("Job");
+  const [requestDestinationPerson, setRequestDestinationPerson] = useState("");
   const [requestLines, setRequestLines] = useState<RequestLineDraft[]>([createEmptyRequestLine()]);
   const [requestRequestedBy, setRequestRequestedBy] = useState("");
   const [requestNeededBy, setRequestNeededBy] = useState("");
@@ -280,6 +281,8 @@ export default function JobEquipmentPage() {
   }
 
   function resetRequestForm() {
+    setRequestDestinationType("Job");
+    setRequestDestinationPerson("");
     setRequestLines([createEmptyRequestLine()]);
     setRequestRequestedBy("");
     setRequestNeededBy("");
@@ -393,9 +396,9 @@ export default function JobEquipmentPage() {
           if (qty < 1) return false;
 
           const location =
-  safeString(item.toolRoomLocation) ||
-  safeString(item.assignmentType) ||
-  safeString(item.jobNumber);
+            safeString(item.toolRoomLocation) ||
+            safeString(item.assignmentType) ||
+            safeString(item.jobNumber);
 
           return (
             isShopLocation(location) ||
@@ -548,6 +551,11 @@ export default function JobEquipmentPage() {
       return;
     }
 
+    if (requestDestinationType === "Person" && !safeString(requestDestinationPerson)) {
+      alert("Select the employee destination.");
+      return;
+    }
+
     const cleanedLines = requestLines.filter(
       (line) => safeString(line.category) || line.inventoryItemId !== ""
     );
@@ -578,7 +586,9 @@ export default function JobEquipmentPage() {
 
     for (const line of cleanedLines) {
       const selectedId = Number(line.inventoryItemId);
-      const item = availableEquipment.find((equipment) => Number((equipment as any).id) === selectedId);
+      const item = availableEquipment.find(
+        (equipment) => Number((equipment as any).id) === selectedId
+      );
 
       if (!item) {
         alert("One of the selected equipment items is no longer available. Please reselect it.");
@@ -596,7 +606,9 @@ export default function JobEquipmentPage() {
       const maxQty = getAvailableQty(item);
 
       if (qty < 1 || qty > maxQty) {
-        alert(`Requested quantity for ${buildEquipmentTitle(item)} must be between 1 and ${maxQty}.`);
+        alert(
+          `Requested quantity for ${buildEquipmentTitle(item)} must be between 1 and ${maxQty}.`
+        );
         return;
       }
 
@@ -619,17 +631,21 @@ export default function JobEquipmentPage() {
 
     const newRequest: JobRequest = {
       id: Date.now(),
-      destinationType: "Job",
+      destinationType: requestDestinationType,
       requestFlow: "To Job",
-      jobNumber,
-      requestedForPerson: "",
+      jobNumber: requestDestinationType === "Job" ? jobNumber : "",
+      requestedForPerson:
+        requestDestinationType === "Person" ? safeString(requestDestinationPerson) : "",
       requestedBy: safeString(requestRequestedBy),
       requestDate: new Date().toISOString().slice(0, 10),
       neededBy: requestNeededBy,
       status: "Open",
       notes: safeString(requestNotes),
       fromLocation: "Shop",
-      toLocation: jobNumber,
+      toLocation:
+        requestDestinationType === "Job"
+          ? jobNumber
+          : `Person: ${safeString(requestDestinationPerson)}`,
       lines,
       workflowStatus: "Request Submitted",
       pickTicketId: null,
@@ -697,7 +713,9 @@ export default function JobEquipmentPage() {
       );
 
       if (!item) {
-        alert("One of the selected pickup equipment items is no longer valid. Please reselect it.");
+        alert(
+          "One of the selected pickup equipment items is no longer valid. Please reselect it."
+        );
         return;
       }
 
@@ -712,7 +730,9 @@ export default function JobEquipmentPage() {
       const maxQty = getAvailableQty(item);
 
       if (qty < 1 || qty > maxQty) {
-        alert(`Requested quantity for ${buildEquipmentTitle(item)} must be between 1 and ${maxQty}.`);
+        alert(
+          `Requested quantity for ${buildEquipmentTitle(item)} must be between 1 and ${maxQty}.`
+        );
         return;
       }
 
@@ -858,6 +878,38 @@ export default function JobEquipmentPage() {
                     gap: 12,
                   }}
                 >
+                  <Field label="Destination Type">
+                    <select
+                      value={requestDestinationType}
+                      onChange={(e) => {
+                        const nextType = e.target.value === "Person" ? "Person" : "Job";
+                        setRequestDestinationType(nextType);
+                        setRequestDestinationPerson("");
+                      }}
+                      style={fieldInputStyle}
+                    >
+                      <option value="Job">Job</option>
+                      <option value="Person">Person</option>
+                    </select>
+                  </Field>
+
+                  {requestDestinationType === "Person" ? (
+                    <Field label="Send To Employee">
+                      <select
+                        value={requestDestinationPerson}
+                        onChange={(e) => setRequestDestinationPerson(e.target.value)}
+                        style={fieldInputStyle}
+                      >
+                        <option value="">Select employee</option>
+                        {employeeOptions.map((employee) => (
+                          <option key={employee} value={employee}>
+                            {employee}
+                          </option>
+                        ))}
+                      </select>
+                    </Field>
+                  ) : null}
+
                   <Field label="Requested By">
                     <select
                       value={requestRequestedBy}
@@ -901,7 +953,9 @@ export default function JobEquipmentPage() {
                             (equipment) => Number((equipment as any).id) === line.inventoryItemId
                           ) || null;
 
-                    const maxQty = selectedEquipment ? Math.max(getAvailableQty(selectedEquipment), 1) : 1;
+                    const maxQty = selectedEquipment
+                      ? Math.max(getAvailableQty(selectedEquipment), 1)
+                      : 1;
 
                     return (
                       <div key={line.rowId} style={lineCardStyle}>
@@ -980,7 +1034,8 @@ export default function JobEquipmentPage() {
                                   {[
                                     buildEquipmentTitle(item),
                                     safeString(item.status),
-                                    safeString(item.toolRoomLocation) || safeString(item.assignmentType),
+                                    safeString(item.toolRoomLocation) ||
+                                      safeString(item.assignmentType),
                                   ]
                                     .filter(Boolean)
                                     .join(" • ")}
@@ -1160,7 +1215,9 @@ export default function JobEquipmentPage() {
                             (equipment) => Number((equipment as any).id) === line.inventoryItemId
                           ) || null;
 
-                    const maxQty = selectedEquipment ? Math.max(getAvailableQty(selectedEquipment), 1) : 1;
+                    const maxQty = selectedEquipment
+                      ? Math.max(getAvailableQty(selectedEquipment), 1)
+                      : 1;
 
                     return (
                       <div key={line.rowId} style={lineCardStyle}>
@@ -1370,22 +1427,22 @@ function EquipmentCards({ rows }: { rows: EquipmentItem[] }) {
           </div>
 
           <div style={detailsGridStyle}>
-            <Detail label="Asset Type" value={(row as any).assetType} />
+            <Detail label="Asset Type" value={row.assetType} />
             <Detail label="Category" value={row.category} />
-            <Detail label="Barcode" value={(row as any).barcode} />
-            <Detail label="Item Number" value={(row as any).itemNumber} />
-            <Detail label="Asset Number" value={(row as any).assetNumber} />
-            <Detail label="Manufacturer" value={(row as any).manufacturer} />
-            <Detail label="Model" value={(row as any).model} />
-            <Detail label="Serial Number" value={(row as any).serialNumber} />
+            <Detail label="Barcode" value={row.barcode} />
+            <Detail label="Item Number" value={row.itemNumber} />
+            <Detail label="Asset Number" value={row.assetNumber} />
+            <Detail label="Manufacturer" value={row.manufacturer} />
+            <Detail label="Model" value={row.model} />
+            <Detail label="Serial Number" value={row.serialNumber} />
             <Detail label="Quantity" value={String(getAvailableQty(row))} />
-            <Detail label="Assignment Type" value={(row as any).assignmentType} />
-            <Detail label="Assigned To" value={(row as any).assignedTo} />
-            <Detail label="Job#" value={(row as any).jobNumber} />
-            <Detail label="Location" value={(row as any).location} />
-            <Detail label="Transfer Date" value={(row as any).transferDate} />
-            <Detail label="Return Date" value={(row as any).returnDate} />
-            <Detail label="Status" value={(row as any).status} />
+            <Detail label="Assignment Type" value={row.assignmentType} />
+            <Detail label="Assigned To" value={row.assignedTo} />
+            <Detail label="Job#" value={row.jobNumber} />
+            <Detail label="Location" value={row.toolRoomLocation} />
+            <Detail label="Transfer Date In" value={row.transferDateIn} />
+            <Detail label="Transfer Date Out" value={row.transferDateOut} />
+            <Detail label="Status" value={row.status} />
           </div>
         </div>
       ))}

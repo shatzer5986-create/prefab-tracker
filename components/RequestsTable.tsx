@@ -48,6 +48,8 @@ export default function RequestsTable({
               <Detail label="Request Date" value={row.requestDate} />
               <Detail label="Needed By" value={row.neededBy} />
               <Detail label="Requested By" value={row.requestedBy} />
+              <Detail label="Destination Type" value={row.destinationType || "Job"} />
+              <Detail label="Destination" value={buildDestinationLabel(row)} />
               <Detail label="Job#" value={row.jobNumber || "-"} />
               <Detail label="Requested For" value={row.requestedForPerson || "-"} />
               <Detail label="From" value={row.fromLocation || "-"} />
@@ -87,14 +89,22 @@ export default function RequestsTable({
                 </button>
                 <button
                   type="button"
-                  style={{ ...smallActionButtonStyle, background: "#166534", border: "1px solid #15803d" }}
+                  style={{
+                    ...smallActionButtonStyle,
+                    background: "#166534",
+                    border: "1px solid #15803d",
+                  }}
                   onClick={() => onUpdateStatus(row.id, "Complete")}
                 >
                   Complete
                 </button>
                 <button
                   type="button"
-                  style={{ ...smallActionButtonStyle, background: "#7f1d1d", border: "1px solid #991b1b" }}
+                  style={{
+                    ...smallActionButtonStyle,
+                    background: "#7f1d1d",
+                    border: "1px solid #991b1b",
+                  }}
                   onClick={() => onUpdateStatus(row.id, "Rejected")}
                 >
                   Reject
@@ -125,10 +135,22 @@ function buildLegacyLine(row: JobRequest): JobRequestLine {
   };
 }
 
+function buildDestinationLabel(row: JobRequest) {
+  if (row.destinationType === "Person") {
+    return row.requestedForPerson || row.toLocation || "-";
+  }
+
+  if (row.destinationType === "General") {
+    return row.toLocation || row.jobNumber || row.requestedForPerson || "-";
+  }
+
+  return row.jobNumber || row.toLocation || row.requestedForPerson || "-";
+}
+
 function buildFlowLabel(row: JobRequest) {
   const flow = row.requestFlow || "";
   const from = row.fromLocation || "";
-  const to = row.toLocation || "";
+  const to = buildDestinationLabel(row);
 
   if (flow && from && to) {
     return `${flow} • ${from} → ${to}`;
@@ -140,6 +162,10 @@ function buildFlowLabel(row: JobRequest) {
 
   if (flow && from) {
     return `${flow} • From ${from}`;
+  }
+
+  if (row.destinationType === "Person" && row.requestedForPerson) {
+    return `Person Request • ${row.requestedForPerson}`;
   }
 
   if (row.jobNumber) {

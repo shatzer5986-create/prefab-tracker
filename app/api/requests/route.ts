@@ -30,7 +30,15 @@ export async function POST(req: NextRequest) {
   try {
     const body = await req.json();
 
+    const destinationType =
+      safeString(body.destinationType) === "Person"
+        ? "Person"
+        : safeString(body.destinationType) === "General"
+        ? "General"
+        : "Job";
+
     const jobNumber = safeString(body.jobNumber);
+    const requestedForPerson = safeString(body.requestedForPerson);
     const requestedBy = safeString(body.requestedBy);
     const requestDate = safeString(body.requestDate);
     const neededBy = safeString(body.neededBy);
@@ -39,24 +47,40 @@ export async function POST(req: NextRequest) {
 
     const lines = Array.isArray(body.lines) ? body.lines : [];
 
-    if (!jobNumber) {
-      return NextResponse.json({ error: "Job number is required" }, { status: 400 });
+    if (destinationType === "Job" && !jobNumber) {
+      return NextResponse.json(
+        { error: "Job number is required when destination type is Job" },
+        { status: 400 }
+      );
+    }
+
+    if (destinationType === "Person" && !requestedForPerson) {
+      return NextResponse.json(
+        { error: "Requested-for person is required when destination type is Person" },
+        { status: 400 }
+      );
     }
 
     if (!requestedBy) {
-      return NextResponse.json({ error: "Requested by is required" }, { status: 400 });
+      return NextResponse.json(
+        { error: "Requested by is required" },
+        { status: 400 }
+      );
     }
 
     if (!lines.length) {
-      return NextResponse.json({ error: "At least one request line is required" }, { status: 400 });
+      return NextResponse.json(
+        { error: "At least one request line is required" },
+        { status: 400 }
+      );
     }
 
     const created = await prisma.request.create({
       data: {
-        destinationType: safeString(body.destinationType) || null,
+        destinationType,
         requestFlow: safeString(body.requestFlow) || null,
-        jobNumber,
-        requestedForPerson: safeString(body.requestedForPerson) || null,
+        jobNumber: jobNumber || "",
+requestedForPerson: requestedForPerson || null,
         requestedBy,
         requestDate: requestDate || new Date().toISOString(),
         neededBy,

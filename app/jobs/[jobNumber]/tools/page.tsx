@@ -204,6 +204,8 @@ export default function JobToolsPage() {
   const [showRequestForm, setShowRequestForm] = useState(false);
   const [showPickupForm, setShowPickupForm] = useState(false);
 
+  const [requestDestinationType, setRequestDestinationType] = useState<"Job" | "Person">("Job");
+  const [requestDestinationPerson, setRequestDestinationPerson] = useState("");
   const [requestLines, setRequestLines] = useState<RequestLineDraft[]>([createEmptyRequestLine()]);
   const [requestRequestedBy, setRequestRequestedBy] = useState("");
   const [requestNeededBy, setRequestNeededBy] = useState("");
@@ -272,6 +274,8 @@ export default function JobToolsPage() {
   }
 
   function resetRequestForm() {
+    setRequestDestinationType("Job");
+    setRequestDestinationPerson("");
     setRequestLines([createEmptyRequestLine()]);
     setRequestRequestedBy("");
     setRequestNeededBy("");
@@ -534,6 +538,11 @@ export default function JobToolsPage() {
       return;
     }
 
+    if (requestDestinationType === "Person" && !safeString(requestDestinationPerson)) {
+      alert("Select the employee destination.");
+      return;
+    }
+
     const cleanedLines = requestLines.filter(
       (line) => safeString(line.category) || line.inventoryItemId !== ""
     );
@@ -605,17 +614,21 @@ export default function JobToolsPage() {
 
     const newRequest: JobRequest = {
       id: Date.now(),
-      destinationType: "Job",
+      destinationType: requestDestinationType,
       requestFlow: "To Job",
-      jobNumber,
-      requestedForPerson: "",
+      jobNumber: requestDestinationType === "Job" ? jobNumber : "",
+      requestedForPerson:
+        requestDestinationType === "Person" ? safeString(requestDestinationPerson) : "",
       requestedBy: safeString(requestRequestedBy),
       requestDate: new Date().toISOString().slice(0, 10),
       neededBy: requestNeededBy,
       status: "Open",
       notes: safeString(requestNotes),
       fromLocation: "Shop",
-      toLocation: jobNumber,
+      toLocation:
+        requestDestinationType === "Job"
+          ? jobNumber
+          : `Person: ${safeString(requestDestinationPerson)}`,
       lines,
       workflowStatus: "Request Submitted",
       pickTicketId: null,
@@ -842,6 +855,38 @@ export default function JobToolsPage() {
                     gap: 12,
                   }}
                 >
+                  <Field label="Destination Type">
+                    <select
+                      value={requestDestinationType}
+                      onChange={(e) => {
+                        const nextType = e.target.value === "Person" ? "Person" : "Job";
+                        setRequestDestinationType(nextType);
+                        setRequestDestinationPerson("");
+                      }}
+                      style={fieldInputStyle}
+                    >
+                      <option value="Job">Job</option>
+                      <option value="Person">Person</option>
+                    </select>
+                  </Field>
+
+                  {requestDestinationType === "Person" ? (
+                    <Field label="Send To Employee">
+                      <select
+                        value={requestDestinationPerson}
+                        onChange={(e) => setRequestDestinationPerson(e.target.value)}
+                        style={fieldInputStyle}
+                      >
+                        <option value="">Select employee</option>
+                        {employeeOptions.map((employee) => (
+                          <option key={employee} value={employee}>
+                            {employee}
+                          </option>
+                        ))}
+                      </select>
+                    </Field>
+                  ) : null}
+
                   <Field label="Requested By">
                     <select
                       value={requestRequestedBy}
