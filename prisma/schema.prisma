@@ -135,3 +135,49 @@ model Employee {
 
   @@map("employees")
 }
+model Request {
+  id                   Int           @id @default(autoincrement())
+  destinationType      String?       @map("destination_type")
+  requestFlow          String?       @map("request_flow")
+  jobNumber            String        @map("job_number")
+  requestedForPerson   String?       @map("requested_for_person")
+  requestedBy          String        @map("requested_by")
+  requestDate          String        @map("request_date")
+  neededBy             String
+  status               String
+  notes                String
+  fromLocation         String?       @map("from_location")
+  toLocation           String?       @map("to_location")
+  workflowStatus       String?       @map("workflow_status")
+  pickTicketId         Int?          @map("pick_ticket_id")
+  pickTicketNumber     String?       @map("pick_ticket_number")
+  transferTicketId     Int?          @map("transfer_ticket_id")
+  transferTicketNumber String?       @map("transfer_ticket_number")
+  deliveredToSiteAt    String?       @map("delivered_to_site_at")
+  assignedToJobAt      String?       @map("assigned_to_job_at")
+  createdAt            DateTime      @default(now()) @map("created_at") @db.Timestamp(6)
+  updatedAt            DateTime      @updatedAt @map("updated_at") @db.Timestamp(6)
+
+  lines                RequestLine[]
+
+  @@map("requests")
+}
+
+model RequestLine {
+  id                Int      @id @default(autoincrement())
+  requestId         Int      @map("request_id")
+  type              String
+  category          String
+  itemName          String   @map("item_name")
+  description       String
+  quantity          Int
+  unit              String
+  inventoryItemId   Int?     @map("inventory_item_id")
+  inventorySnapshot String?  @map("inventory_snapshot")
+  createdAt         DateTime @default(now()) @map("created_at") @db.Timestamp(6)
+  updatedAt         DateTime @updatedAt @map("updated_at") @db.Timestamp(6)
+
+  request           Request  @relation(fields: [requestId], references: [id], onDelete: Cascade)
+
+  @@map("request_lines")
+}

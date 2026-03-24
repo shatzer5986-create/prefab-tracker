@@ -240,6 +240,44 @@ export default function EmployeesPage() {
     }
   }
 
+  async function handleDeleteAllEmployees() {
+    const confirmed = window.confirm(
+      "Delete ALL employees? This cannot be undone."
+    );
+    if (!confirmed) return;
+
+    try {
+      setIsSaving(true);
+
+      for (const employee of employees) {
+        const response = await fetch(`/api/employees/${employee.id}`, {
+          method: "DELETE",
+        });
+
+        const data = await response.json().catch(() => ({}));
+
+        if (!response.ok) {
+          throw new Error(
+            data?.error || `Failed deleting employee ${employee.name}`
+          );
+        }
+      }
+
+      await loadEmployees();
+      resetForm();
+      alert("All employees deleted.");
+    } catch (error) {
+      console.error("Failed to delete all employees:", error);
+      alert(
+        error instanceof Error
+          ? error.message
+          : "Failed to delete all employees."
+      );
+    } finally {
+      setIsSaving(false);
+    }
+  }
+
   async function handleImportEmployees(
     e: React.ChangeEvent<HTMLInputElement>
   ) {
@@ -511,6 +549,19 @@ export default function EmployeesPage() {
               disabled={isSaving}
             >
               Refresh
+            </button>
+
+            <button
+              type="button"
+              onClick={handleDeleteAllEmployees}
+              style={{
+                ...secondaryButtonStyle,
+                background: "#7f1d1d",
+                border: "1px solid #991b1b",
+              }}
+              disabled={isSaving || employees.length === 0}
+            >
+              Delete All Employees
             </button>
           </div>
 

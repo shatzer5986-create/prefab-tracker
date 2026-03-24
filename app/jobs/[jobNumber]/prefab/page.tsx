@@ -13,7 +13,6 @@ import { TableWrapper, Th, Td, tableStyle } from "@/components/TableBits";
 
 import type {
   AppData,
-  AppNotification,
   Employee,
   Job,
   JobRequest,
@@ -117,7 +116,6 @@ export default function JobPrefabPage() {
   const [employees, setEmployees] = useState<Employee[]>([]);
   const [prefab, setPrefab] = useState<PrefabItem[]>([]);
   const [requests, setRequests] = useState<JobRequest[]>([]);
-  const [notifications, setNotifications] = useState<AppNotification[]>([]);
   const [showRequestForm, setShowRequestForm] = useState(false);
   const [showPickupForm, setShowPickupForm] = useState(false);
   const [prefabRequestForm, setPrefabRequestForm] = useState<RequestFormState>(() =>
@@ -147,9 +145,37 @@ export default function JobPrefabPage() {
   function refreshFromStorage() {
     const parsed = loadStoredAppData();
     setPrefab(parsed?.prefab || fallbackData.prefab || []);
-    setRequests(parsed?.requests || fallbackData.requests || []);
-    setNotifications(parsed?.notifications || fallbackData.notifications || []);
     setJobs(parsed?.jobs || fallbackData.jobs || []);
+  }
+
+  async function refreshRequestsFromApi() {
+    try {
+      const response = await fetch("/api/requests", { cache: "no-store" });
+      if (!response.ok) throw new Error("Failed to load requests");
+      const data = await response.json();
+      setRequests(Array.isArray(data) ? data : []);
+    } catch (error) {
+      console.error("Loading requests failed:", error);
+      setRequests([]);
+    }
+  }
+
+  async function createSharedRequest(newRequest: JobRequest) {
+    const response = await fetch("/api/requests", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify(newRequest),
+    });
+
+    const data = await response.json().catch(() => ({}));
+
+    if (!response.ok) {
+      throw new Error(data?.error || "Failed to create request");
+    }
+
+    return data;
   }
 
   useEffect(() => {
@@ -178,6 +204,7 @@ export default function JobPrefabPage() {
     async function init() {
       await loadJobs();
       refreshFromStorage();
+      await refreshRequestsFromApi();
       await loadEmployeesFromApi();
     }
 
@@ -185,11 +212,13 @@ export default function JobPrefabPage() {
 
     const handleFocus = () => {
       refreshFromStorage();
+      refreshRequestsFromApi();
       loadEmployeesFromApi();
     };
 
     const handleStorage = () => {
       refreshFromStorage();
+      refreshRequestsFromApi();
       loadEmployeesFromApi();
     };
 
@@ -209,12 +238,10 @@ export default function JobPrefabPage() {
       ...latest,
       jobs: latest.jobs?.length ? latest.jobs : jobs,
       prefab,
-      requests,
-      notifications,
     };
 
     localStorage.setItem(STORAGE_KEY, JSON.stringify(dataToSave));
-  }, [jobs, prefab, requests, notifications]);
+  }, [jobs, prefab]);
 
   const currentJob = useMemo(
     () => jobs.find((job) => job.jobNumber === jobNumber) || null,
@@ -241,25 +268,16 @@ export default function JobPrefabPage() {
   }, [employees]);
 
   const totalPlanned = useMemo(
-    () =>
-      filteredPrefab.reduce(
-        (sum, row) => sum + Number(row.qtyPlanned || 0),
-        0
-      ),
+    () => filteredPrefab.reduce((sum, row) => sum + Number(row.qtyPlanned || 0), 0),
     [filteredPrefab]
   );
 
   const totalBuilt = useMemo(
-    () =>
-      filteredPrefab.reduce(
-        (sum, row) => sum + Number(row.qtyBuilt || 0),
-        0
-      ),
+    () => filteredPrefab.reduce((sum, row) => sum + Number(row.qtyBuilt || 0), 0),
     [filteredPrefab]
   );
 
-  const prefabPercent =
-    totalPlanned > 0 ? Math.round((totalBuilt / totalPlanned) * 100) : 0;
+  const prefabPercent = totalPlanned > 0 ? Math.round((totalBuilt / totalPlanned) * 100) : 0;
 
   const blockedCount = useMemo(
     () =>
@@ -292,30 +310,10 @@ export default function JobPrefabPage() {
 
   function toggleAllPrefabForPickup() {
     const allIds = filteredPrefab.map((item) => item.id);
-
-    setSelectedPrefabIds((prev) =>
-      prev.length === allIds.length ? [] : allIds
-    );
+    setSelectedPrefabIds((prev) => (prev.length === allIds.length ? [] : allIds));
   }
 
-  function addSubmittedNotification(request: JobRequest, title = "Request submitted") {
-    const newNotification: AppNotification = {
-      id: Date.now() + Math.floor(Math.random() * 1000),
-      jobNumber: request.jobNumber,
-      requestId: request.id,
-      type: "Request Submitted",
-      title,
-      message:
-        (request.lines || []).map((line) => line.itemName).join(", ") ||
-        "Items requested.",
-      createdAt: new Date().toISOString(),
-      isRead: false,
-    };
-
-    setNotifications((prev) => [newNotification, ...prev]);
-  }
-
-  function savePrefabRequest() {
+  async function savePrefabRequest() {
     const hasMinimumData =
       prefabRequestForm.itemName.trim() ||
       prefabRequestForm.description.trim() ||
@@ -358,13 +356,18 @@ export default function JobPrefabPage() {
       assignedToJobAt: "",
     };
 
-    setRequests((prev) => [newRequest, ...prev]);
-    addSubmittedNotification(newRequest, "Prefab request submitted");
-    setPrefabRequestForm(emptyPrefabRequestForm(jobNumber));
-    setShowRequestForm(false);
+    try {
+      await createSharedRequest(newRequest);
+      await refreshRequestsFromApi();
+      setPrefabRequestForm(emptyPrefabRequestForm(jobNumber));
+      setShowRequestForm(false);
+    } catch (error) {
+      console.error("Saving prefab request failed:", error);
+      alert(error instanceof Error ? error.message : "Failed to create request.");
+    }
   }
 
-  function createPickupRequest() {
+  async function createPickupRequest() {
     if (!selectedPrefabIds.length) {
       alert("Select at least one prefab row.");
       return;
@@ -419,15 +422,20 @@ export default function JobPrefabPage() {
       assignedToJobAt: "",
     };
 
-    setRequests((prev) => [newRequest, ...prev]);
-    addSubmittedNotification(newRequest, "Prefab pickup request submitted");
+    try {
+      await createSharedRequest(newRequest);
+      await refreshRequestsFromApi();
 
-    setSelectedPrefabIds([]);
-    setPickupRequestedBy("");
-    setPickupNeededBy("");
-    setPickupToLocation("Shop");
-    setPickupNotes("");
-    setShowPickupForm(false);
+      setSelectedPrefabIds([]);
+      setPickupRequestedBy("");
+      setPickupNeededBy("");
+      setPickupToLocation("Shop");
+      setPickupNotes("");
+      setShowPickupForm(false);
+    } catch (error) {
+      console.error("Creating prefab pickup request failed:", error);
+      alert(error instanceof Error ? error.message : "Failed to create request.");
+    }
   }
 
   return (
@@ -519,7 +527,8 @@ export default function JobPrefabPage() {
                 </div>
 
                 <div style={{ fontSize: 13, color: "#d1d5db" }}>
-                  Select one or more prefab rows from this job, then send a pickup request to the shop.
+                  Select one or more prefab rows from this job, then send a pickup request to the
+                  shop.
                 </div>
 
                 <div
@@ -705,10 +714,18 @@ function JobNavTabs({
 }) {
   const tabs = [
     { key: "dashboard", label: "Dashboard", href: `/jobs/${encodeURIComponent(jobNumber)}` },
-    { key: "materials", label: "Materials", href: `/jobs/${encodeURIComponent(jobNumber)}/materials` },
+    {
+      key: "materials",
+      label: "Materials",
+      href: `/jobs/${encodeURIComponent(jobNumber)}/materials`,
+    },
     { key: "prefab", label: "Prefab", href: `/jobs/${encodeURIComponent(jobNumber)}/prefab` },
     { key: "tools", label: "Tools", href: `/jobs/${encodeURIComponent(jobNumber)}/tools` },
-    { key: "equipment", label: "Equipment", href: `/jobs/${encodeURIComponent(jobNumber)}/equipment` },
+    {
+      key: "equipment",
+      label: "Equipment",
+      href: `/jobs/${encodeURIComponent(jobNumber)}/equipment`,
+    },
   ] as const;
 
   return (

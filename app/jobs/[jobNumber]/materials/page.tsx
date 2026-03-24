@@ -11,8 +11,6 @@ import RequestsTable from "@/components/RequestsTable";
 import { TableWrapper, Th, Td, tableStyle } from "@/components/TableBits";
 
 import type {
-  AppData,
-  AppNotification,
   Employee,
   Job,
   JobRequest,
@@ -20,39 +18,7 @@ import type {
   Material,
 } from "@/types";
 
-const STORAGE_KEY = "prefab-tracker-v7";
 const SHOP_LOCATIONS = ["Shop", "Tool Room", "Yard", "WH1", "WH2"];
-
-const fallbackData: AppData = {
-  jobs: [],
-  materials: [],
-  prefab: [],
-  purchaseOrders: [],
-  assemblies: [],
-  assemblyBom: [],
-  regularInventory: [],
-  materialMovements: [],
-  toolInventory: [],
-  equipmentInventory: [],
-  inventoryLogs: [],
-  requests: [],
-  notifications: [],
-  tickets: [],
-  employees: [],
-};
-
-function loadStoredAppData(): AppData | null {
-  if (typeof window === "undefined") return null;
-
-  const raw = localStorage.getItem(STORAGE_KEY);
-  if (!raw) return null;
-
-  try {
-    return JSON.parse(raw) as AppData;
-  } catch {
-    return null;
-  }
-}
 
 function safeString(value: unknown) {
   return typeof value === "string" ? value.trim() : "";
@@ -130,7 +96,6 @@ export default function JobMaterialsPage() {
   const [employees, setEmployees] = useState<Employee[]>([]);
   const [materials, setMaterials] = useState<Material[]>([]);
   const [requests, setRequests] = useState<JobRequest[]>([]);
-  const [notifications, setNotifications] = useState<AppNotification[]>([]);
 
   const [showRequestForm, setShowRequestForm] = useState(false);
   const [showPickupForm, setShowPickupForm] = useState(false);
@@ -172,6 +137,18 @@ export default function JobMaterialsPage() {
     }
   }
 
+  async function loadJobsFromApi() {
+    try {
+      const response = await fetch("/api/jobs", { cache: "no-store" });
+      if (!response.ok) throw new Error("Failed to load jobs");
+      const dbJobs = await response.json();
+      setJobs(Array.isArray(dbJobs) ? dbJobs : []);
+    } catch (error) {
+      console.error("Loading jobs failed:", error);
+      setJobs([]);
+    }
+  }
+
   async function reloadMaterials() {
     try {
       const response = await fetch("/api/materials", { cache: "no-store" });
@@ -180,32 +157,38 @@ export default function JobMaterialsPage() {
       setMaterials(Array.isArray(dbMaterials) ? dbMaterials : []);
     } catch (error) {
       console.error("Reloading materials failed:", error);
+      setMaterials([]);
     }
   }
 
-  function refreshRequestsSide() {
-    const parsed = loadStoredAppData();
-    setRequests(parsed?.requests || fallbackData.requests);
-    setNotifications(parsed?.notifications || fallbackData.notifications);
-    setJobs(parsed?.jobs || fallbackData.jobs);
+  async function refreshRequestsFromApi() {
+    try {
+      const response = await fetch("/api/requests", { cache: "no-store" });
+      if (!response.ok) throw new Error("Failed to load requests");
+      const data = await response.json();
+      setRequests(Array.isArray(data) ? data : []);
+    } catch (error) {
+      console.error("Loading requests failed:", error);
+      setRequests([]);
+    }
   }
 
-  function persistRequestsAndNotifications(
-    nextRequests: JobRequest[],
-    nextNotifications: AppNotification[]
-  ) {
-    const latest = loadStoredAppData() || fallbackData;
+  async function createSharedRequest(newRequest: JobRequest) {
+    const response = await fetch("/api/requests", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify(newRequest),
+    });
 
-    const updatedData: AppData = {
-      ...latest,
-      requests: nextRequests,
-      notifications: nextNotifications,
-      materials: latest.materials || [],
-    };
+    const data = await response.json().catch(() => ({}));
 
-    localStorage.setItem(STORAGE_KEY, JSON.stringify(updatedData));
-    setRequests(nextRequests);
-    setNotifications(nextNotifications);
+    if (!response.ok) {
+      throw new Error(data?.error || "Failed to create request");
+    }
+
+    return data;
   }
 
   useEffect(() => {
@@ -224,23 +207,10 @@ export default function JobMaterialsPage() {
   }, [jobNumber]);
 
   useEffect(() => {
-    async function loadJobs() {
-      try {
-        const response = await fetch("/api/jobs", { cache: "no-store" });
-        if (!response.ok) throw new Error("Failed to load jobs");
-        const dbJobs = await response.json();
-        setJobs(Array.isArray(dbJobs) ? dbJobs : []);
-      } catch (error) {
-        console.error("Loading jobs failed:", error);
-        const parsed = loadStoredAppData();
-        setJobs(parsed?.jobs || fallbackData.jobs);
-      }
-    }
-
     async function init() {
-      await loadJobs();
+      await loadJobsFromApi();
       await reloadMaterials();
-      refreshRequestsSide();
+      await refreshRequestsFromApi();
       await loadEmployeesFromApi();
     }
 
@@ -248,12 +218,12 @@ export default function JobMaterialsPage() {
 
     const handleFocus = () => {
       reloadMaterials();
-      refreshRequestsSide();
+      refreshRequestsFromApi();
       loadEmployeesFromApi();
     };
 
     const handleStorage = () => {
-      refreshRequestsSide();
+      refreshRequestsFromApi();
       loadEmployeesFromApi();
     };
 
@@ -443,7 +413,7 @@ export default function JobMaterialsPage() {
     });
   }
 
-  function saveManualMaterialRequest() {
+  async function saveManualMaterialRequest() {
     const hasMinimumData =
       materialRequestForm.itemName.trim() ||
       materialRequestForm.description.trim() ||
@@ -470,7 +440,7 @@ export default function JobMaterialsPage() {
       jobNumber,
       requestedForPerson: "",
       requestedBy: materialRequestForm.requestedBy.trim(),
-      requestDate: new Date().toISOString().slice(0, 10),
+      requestDate: new Date().toISOString(),
       neededBy: materialRequestForm.neededBy,
       status: "Open",
       notes: materialRequestForm.notes.trim(),
@@ -486,28 +456,15 @@ export default function JobMaterialsPage() {
       assignedToJobAt: "",
     };
 
-    const latest = loadStoredAppData() || fallbackData;
-    const nextRequests = [newRequest, ...(latest.requests || [])];
-
-    const newNotification: AppNotification = {
-      id: Date.now() + Math.floor(Math.random() * 1000),
-      jobNumber: newRequest.jobNumber,
-      requestId: newRequest.id,
-      type: "Request Submitted",
-      title: "Material request submitted",
-      message:
-        (newRequest.lines || []).map((line) => line.itemName).join(", ") ||
-        "Items requested.",
-      createdAt: new Date().toISOString(),
-      isRead: false,
-    };
-
-    const nextNotifications = [newNotification, ...(latest.notifications || [])];
-
-    persistRequestsAndNotifications(nextRequests, nextNotifications);
-
-    setMaterialRequestForm(emptyMaterialRequestForm(jobNumber));
-    setShowRequestForm(false);
+    try {
+      await createSharedRequest(newRequest);
+      await refreshRequestsFromApi();
+      setMaterialRequestForm(emptyMaterialRequestForm(jobNumber));
+      setShowRequestForm(false);
+    } catch (error) {
+      console.error("Saving manual material request failed:", error);
+      alert(error instanceof Error ? error.message : "Failed to create request.");
+    }
   }
 
   async function createShopToJobRequest() {
@@ -565,7 +522,7 @@ export default function JobMaterialsPage() {
       jobNumber,
       requestedForPerson: "",
       requestedBy: safeString(requestRequestedBy),
-      requestDate: new Date().toISOString().slice(0, 10),
+      requestDate: new Date().toISOString(),
       neededBy: requestNeededBy,
       status: "Open",
       notes: safeString(requestNotes),
@@ -581,34 +538,20 @@ export default function JobMaterialsPage() {
       assignedToJobAt: "",
     };
 
-    const latest = loadStoredAppData() || fallbackData;
-    const nextRequests = [newRequest, ...(latest.requests || [])];
+    try {
+      await createSharedRequest(newRequest);
+      await refreshRequestsFromApi();
 
-    const newNotification: AppNotification = {
-      id: Date.now() + Math.floor(Math.random() * 1000),
-      jobNumber: newRequest.jobNumber,
-      requestId: newRequest.id,
-      type: "Request Submitted",
-      title: "Material request submitted",
-      message:
-        (newRequest.lines || [])
-          .map(
-            (line) => `${line.itemName} (${line.quantity}${line.unit ? ` ${line.unit}` : ""})`
-          )
-          .join(", ") || "Items requested.",
-      createdAt: new Date().toISOString(),
-      isRead: false,
-    };
-
-    const nextNotifications = [newNotification, ...(latest.notifications || [])];
-    persistRequestsAndNotifications(nextRequests, nextNotifications);
-
-    setSelectedShopMaterialIds([]);
-    setSelectedShopMaterialQtys({});
-    setRequestRequestedBy("");
-    setRequestNeededBy("");
-    setRequestNotes("");
-    setShowRequestForm(false);
+      setSelectedShopMaterialIds([]);
+      setSelectedShopMaterialQtys({});
+      setRequestRequestedBy("");
+      setRequestNeededBy("");
+      setRequestNotes("");
+      setShowRequestForm(false);
+    } catch (error) {
+      console.error("Creating material request failed:", error);
+      alert(error instanceof Error ? error.message : "Failed to create request.");
+    }
   }
 
   async function createPickupRequest() {
@@ -666,7 +609,7 @@ export default function JobMaterialsPage() {
       jobNumber,
       requestedForPerson: "",
       requestedBy: safeString(pickupRequestedBy),
-      requestDate: new Date().toISOString().slice(0, 10),
+      requestDate: new Date().toISOString(),
       neededBy: pickupNeededBy,
       status: "Open",
       notes: safeString(pickupNotes),
@@ -682,35 +625,21 @@ export default function JobMaterialsPage() {
       assignedToJobAt: "",
     };
 
-    const latest = loadStoredAppData() || fallbackData;
-    const nextRequests = [newRequest, ...(latest.requests || [])];
+    try {
+      await createSharedRequest(newRequest);
+      await refreshRequestsFromApi();
 
-    const newNotification: AppNotification = {
-      id: Date.now() + Math.floor(Math.random() * 1000),
-      jobNumber: newRequest.jobNumber,
-      requestId: newRequest.id,
-      type: "Request Submitted",
-      title: "Material pickup request submitted",
-      message:
-        (newRequest.lines || [])
-          .map(
-            (line) => `${line.itemName} (${line.quantity}${line.unit ? ` ${line.unit}` : ""})`
-          )
-          .join(", ") || "Items requested.",
-      createdAt: new Date().toISOString(),
-      isRead: false,
-    };
-
-    const nextNotifications = [newNotification, ...(latest.notifications || [])];
-    persistRequestsAndNotifications(nextRequests, nextNotifications);
-
-    setSelectedJobsiteMaterialIds([]);
-    setSelectedJobsiteMaterialQtys({});
-    setPickupRequestedBy("");
-    setPickupNeededBy("");
-    setPickupToLocation("Shop");
-    setPickupNotes("");
-    setShowPickupForm(false);
+      setSelectedJobsiteMaterialIds([]);
+      setSelectedJobsiteMaterialQtys({});
+      setPickupRequestedBy("");
+      setPickupNeededBy("");
+      setPickupToLocation("Shop");
+      setPickupNotes("");
+      setShowPickupForm(false);
+    } catch (error) {
+      console.error("Creating material pickup request failed:", error);
+      alert(error instanceof Error ? error.message : "Failed to create request.");
+    }
   }
 
   return (

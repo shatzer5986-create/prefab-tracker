@@ -11,7 +11,6 @@ import RequestsTable from "@/components/RequestsTable";
 
 import type {
   AppData,
-  AppNotification,
   Employee,
   EquipmentItem,
   Job,
@@ -211,7 +210,6 @@ export default function JobEquipmentPage() {
   const [employees, setEmployees] = useState<Employee[]>([]);
   const [equipmentInventory, setEquipmentInventory] = useState<EquipmentItem[]>([]);
   const [requests, setRequests] = useState<JobRequest[]>([]);
-  const [notifications, setNotifications] = useState<AppNotification[]>([]);
 
   const [showRequestForm, setShowRequestForm] = useState(false);
   const [showPickupForm, setShowPickupForm] = useState(false);
@@ -232,8 +230,6 @@ export default function JobEquipmentPage() {
     const parsed = loadStoredAppData();
 
     setEquipmentInventory(loadStoredEquipment());
-    setRequests(parsed?.requests || fallbackData.requests);
-    setNotifications(parsed?.notifications || fallbackData.notifications);
     setJobs(parsed?.jobs || fallbackData.jobs);
   }
 
@@ -251,23 +247,34 @@ export default function JobEquipmentPage() {
     }
   }
 
-  function persistRequestsAndNotifications(
-    nextRequests: JobRequest[],
-    nextNotifications: AppNotification[]
-  ) {
-    const latest = loadStoredAppData() || fallbackData;
+  async function refreshRequestsFromApi() {
+    try {
+      const response = await fetch("/api/requests", { cache: "no-store" });
+      if (!response.ok) throw new Error("Failed to load requests");
+      const data = await response.json();
+      setRequests(Array.isArray(data) ? data : []);
+    } catch (error) {
+      console.error("Loading requests failed:", error);
+      setRequests([]);
+    }
+  }
 
-    const updatedData: AppData = {
-      ...latest,
-      requests: nextRequests,
-      notifications: nextNotifications,
-      equipmentInventory: latest.equipmentInventory || [],
-    };
+  async function createSharedRequest(newRequest: JobRequest) {
+    const response = await fetch("/api/requests", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify(newRequest),
+    });
 
-    localStorage.setItem(STORAGE_KEY, JSON.stringify(updatedData));
+    const data = await response.json().catch(() => ({}));
 
-    setRequests(nextRequests);
-    setNotifications(nextNotifications);
+    if (!response.ok) {
+      throw new Error(data?.error || "Failed to create request");
+    }
+
+    return data;
   }
 
   function resetRequestForm() {
@@ -308,6 +315,7 @@ export default function JobEquipmentPage() {
     async function init() {
       await loadJobs();
       refreshFromStorage();
+      await refreshRequestsFromApi();
       await loadEmployeesFromApi();
     }
 
@@ -315,11 +323,13 @@ export default function JobEquipmentPage() {
 
     const handleFocus = () => {
       refreshFromStorage();
+      refreshRequestsFromApi();
       loadEmployeesFromApi();
     };
 
     const handleStorage = () => {
       refreshFromStorage();
+      refreshRequestsFromApi();
       loadEmployeesFromApi();
     };
 
@@ -479,7 +489,7 @@ export default function JobEquipmentPage() {
       .sort((a, b) => buildEquipmentTitle(a).localeCompare(buildEquipmentTitle(b)));
   }
 
-  function createEquipmentRequest() {
+  async function createEquipmentRequest() {
     if (!safeString(requestRequestedBy)) {
       alert("Select Requested By.");
       return;
@@ -507,7 +517,6 @@ export default function JobEquipmentPage() {
     }
 
     const validatedSelections: Array<{
-      line: RequestLineDraft;
       item: EquipmentItem;
       qty: number;
     }> = [];
@@ -533,7 +542,6 @@ export default function JobEquipmentPage() {
       const qty = Math.max(1, Number(line.quantity) || 1);
 
       validatedSelections.push({
-        line,
         item,
         qty,
       });
@@ -576,30 +584,15 @@ export default function JobEquipmentPage() {
       assignedToJobAt: "",
     };
 
-    const latest = loadStoredAppData() || fallbackData;
-    const nextRequests = [newRequest, ...(latest.requests || [])];
-
-    const newNotification: AppNotification = {
-      id: Date.now() + Math.floor(Math.random() * 1000),
-      jobNumber: newRequest.jobNumber,
-      requestId: newRequest.id,
-      type: "Request Submitted",
-      title: "Equipment request submitted",
-      message:
-        (newRequest.lines || [])
-          .map(
-            (line) => `${line.itemName} (${line.quantity}${line.unit ? ` ${line.unit}` : ""})`
-          )
-          .join(", ") || "Items requested.",
-      createdAt: new Date().toISOString(),
-      isRead: false,
-    };
-
-    const nextNotifications = [newNotification, ...(latest.notifications || [])];
-    persistRequestsAndNotifications(nextRequests, nextNotifications);
-
-    resetRequestForm();
-    setShowRequestForm(false);
+    try {
+      await createSharedRequest(newRequest);
+      await refreshRequestsFromApi();
+      resetRequestForm();
+      setShowRequestForm(false);
+    } catch (error) {
+      console.error("Creating equipment request failed:", error);
+      alert(error instanceof Error ? error.message : "Failed to create request.");
+    }
   }
 
   function toggleSelectedEquipment(id: number) {
@@ -652,7 +645,7 @@ export default function JobEquipmentPage() {
     });
   }
 
-  function createPickupRequest() {
+  async function createPickupRequest() {
     if (!selectedEquipmentIds.length) {
       alert("Select at least one equipment item.");
       return;
@@ -724,30 +717,15 @@ export default function JobEquipmentPage() {
       assignedToJobAt: "",
     };
 
-    const latest = loadStoredAppData() || fallbackData;
-    const nextRequests = [newRequest, ...(latest.requests || [])];
-
-    const newNotification: AppNotification = {
-      id: Date.now() + Math.floor(Math.random() * 1000),
-      jobNumber: newRequest.jobNumber,
-      requestId: newRequest.id,
-      type: "Request Submitted",
-      title: "Equipment pickup request submitted",
-      message:
-        (newRequest.lines || [])
-          .map(
-            (line) => `${line.itemName} (${line.quantity}${line.unit ? ` ${line.unit}` : ""})`
-          )
-          .join(", ") || "Items requested.",
-      createdAt: new Date().toISOString(),
-      isRead: false,
-    };
-
-    const nextNotifications = [newNotification, ...(latest.notifications || [])];
-    persistRequestsAndNotifications(nextRequests, nextNotifications);
-
-    resetPickupForm();
-    setShowPickupForm(false);
+    try {
+      await createSharedRequest(newRequest);
+      await refreshRequestsFromApi();
+      resetPickupForm();
+      setShowPickupForm(false);
+    } catch (error) {
+      console.error("Creating equipment pickup request failed:", error);
+      alert(error instanceof Error ? error.message : "Failed to create request.");
+    }
   }
 
   return (
