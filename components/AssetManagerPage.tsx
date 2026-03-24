@@ -13,6 +13,7 @@ import EquipmentTable from "@/components/EquipmentTable";
 import type { AppData, Employee, EquipmentItem } from "@/types";
 
 const EXTRA_JOB_OPTIONS = ["Yard", "Tool Room", "Shop", "WH1", "WH2"];
+const STORAGE_LOCATIONS = ["Tool Room", "Shop", "Yard", "WH1", "WH2"] as const;
 
 function safeString(value: unknown) {
   return typeof value === "string" ? value.trim() : "";
@@ -43,7 +44,7 @@ function dedupeStrings(values: string[]) {
 
 function isStorageLocation(value: string) {
   const normalized = safeString(value).toLowerCase();
-  return ["tool room", "shop", "yard", "wh1", "wh2"].includes(normalized);
+  return STORAGE_LOCATIONS.map((x) => x.toLowerCase()).includes(normalized);
 }
 
 function normalizeAssignmentType(
@@ -410,15 +411,41 @@ export default function AssetManagerPage({
     [allAssets, assetType]
   );
 
-  const assignedCount = useMemo(
+  const assignedToPeopleCount = useMemo(
     () =>
       rows.filter(
         (x) =>
-          safeString(x.jobNumber) !== "" ||
-          safeString(x.assignedTo) !== "" ||
+          x.assignmentType === "Person" && safeString(x.assignedTo) !== ""
+      ).length,
+    [rows]
+  );
+
+  const assignedToJobsCount = useMemo(
+    () =>
+      rows.filter(
+        (x) =>
+          x.assignmentType === "Job" && safeString(x.jobNumber) !== ""
+      ).length,
+    [rows]
+  );
+
+  const inStorageCount = useMemo(
+    () =>
+      rows.filter(
+        (x) =>
+          x.assignmentType === "Tool Room" ||
+          x.assignmentType === "Shop" ||
+          x.assignmentType === "Yard" ||
+          x.assignmentType === "WH1" ||
+          x.assignmentType === "WH2" ||
           isStorageLocation(x.toolRoomLocation)
       ).length,
     [rows]
+  );
+
+  const assignedCount = useMemo(
+    () => assignedToPeopleCount + assignedToJobsCount + inStorageCount,
+    [assignedToPeopleCount, assignedToJobsCount, inStorageCount]
   );
 
   const damagedCount = useMemo(
@@ -465,21 +492,30 @@ export default function AssetManagerPage({
       safeString(form.assignmentType)
     );
 
+    const normalizedJobNumber =
+      nextAssignmentType === "Job" || nextAssignmentType === "Person"
+        ? safeString(form.jobNumber)
+        : "";
+
+    const normalizedAssignedTo =
+      nextAssignmentType === "Person" ? safeString(form.assignedTo) : "";
+
+    const normalizedToolRoomLocation =
+      nextAssignmentType === "Tool Room" ||
+      nextAssignmentType === "Shop" ||
+      nextAssignmentType === "Yard" ||
+      nextAssignmentType === "WH1" ||
+      nextAssignmentType === "WH2"
+        ? nextAssignmentType
+        : "";
+
     const payload: Omit<EquipmentItem, "id"> = {
       ...form,
       assetType,
-      jobNumber: nextAssignmentType === "Job" ? safeString(form.jobNumber) : "",
-      assignedTo: nextAssignmentType === "Person" ? safeString(form.assignedTo) : "",
+      jobNumber: normalizedJobNumber,
+      assignedTo: normalizedAssignedTo,
       assignmentType: nextAssignmentType,
-      toolRoomLocation: isStorageLocation(safeString(form.jobNumber))
-        ? safeString(form.jobNumber)
-        : nextAssignmentType === "Tool Room" ||
-          nextAssignmentType === "Shop" ||
-          nextAssignmentType === "Yard" ||
-          nextAssignmentType === "WH1" ||
-          nextAssignmentType === "WH2"
-        ? nextAssignmentType
-        : "",
+      toolRoomLocation: normalizedToolRoomLocation,
       description: form.description || assetType,
       category: form.category || assetType,
       status: form.status === "Damaged" ? "Damaged" : "Working",
@@ -519,10 +555,8 @@ export default function AssetManagerPage({
 
   function handleEdit(row: EquipmentItem) {
     const editLocation =
-      row.assignmentType === "Job"
+      row.assignmentType === "Job" || row.assignmentType === "Person"
         ? safeString(row.jobNumber)
-        : row.assignmentType === "Person"
-        ? ""
         : safeString(row.toolRoomLocation) || safeString(row.assignmentType);
 
     setForm({
@@ -797,6 +831,9 @@ export default function AssetManagerPage({
       >
         <StatCard title={title} value={String(rows.length)} />
         <StatCard title="Assigned" value={String(assignedCount)} />
+        <StatCard title="To People" value={String(assignedToPeopleCount)} />
+        <StatCard title="To Jobs" value={String(assignedToJobsCount)} />
+        <StatCard title="In Storage" value={String(inStorageCount)} />
         <StatCard title="Damaged" value={String(damagedCount)} />
       </div>
 

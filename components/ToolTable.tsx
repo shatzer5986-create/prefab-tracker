@@ -17,6 +17,7 @@ export default function ToolTable({
   const [search, setSearch] = useState("");
   const [categoryFilter, setCategoryFilter] = useState("All Categories");
   const [assignedToFilter, setAssignedToFilter] = useState("All Assignments");
+  const [assignmentTypeFilter, setAssignmentTypeFilter] = useState("All Types");
 
   const categoryOptions = useMemo(() => {
     const categories = rows
@@ -40,6 +41,17 @@ export default function ToolTable({
     ];
   }, [rows]);
 
+  const assignmentTypeOptions = useMemo(() => {
+    const types = rows
+      .map((row) => String(row.assignmentType || "").trim())
+      .filter(Boolean);
+
+    return [
+      "All Types",
+      ...Array.from(new Set(types)).sort((a, b) => a.localeCompare(b)),
+    ];
+  }, [rows]);
+
   const filteredRows = useMemo(() => {
     const term = search.trim().toLowerCase();
 
@@ -49,10 +61,15 @@ export default function ToolTable({
 
       const assignedToDisplay = buildAssignedToDisplay(row);
       const locationLabel = buildLocationLabel(row);
+      const relatedJobLabel = buildRelatedJobLabel(row);
 
       const matchesAssignedTo =
         assignedToFilter === "All Assignments" ||
         assignedToDisplay === assignedToFilter;
+
+      const matchesAssignmentType =
+        assignmentTypeFilter === "All Types" ||
+        row.assignmentType === assignmentTypeFilter;
 
       const matchesSearch =
         !term ||
@@ -69,6 +86,7 @@ export default function ToolTable({
           row.toolRoomLocation,
           locationLabel,
           assignedToDisplay,
+          relatedJobLabel,
           row.status,
           row.serialNumber,
         ]
@@ -76,9 +94,14 @@ export default function ToolTable({
           .toLowerCase()
           .includes(term);
 
-      return matchesCategory && matchesAssignedTo && matchesSearch;
+      return (
+        matchesCategory &&
+        matchesAssignedTo &&
+        matchesAssignmentType &&
+        matchesSearch
+      );
     });
-  }, [rows, search, categoryFilter, assignedToFilter]);
+  }, [rows, search, categoryFilter, assignedToFilter, assignmentTypeFilter]);
 
   return (
     <div style={{ display: "grid", gap: 12 }}>
@@ -107,6 +130,18 @@ export default function ToolTable({
           {categoryOptions.map((category) => (
             <option key={category} value={category}>
               {category}
+            </option>
+          ))}
+        </select>
+
+        <select
+          value={assignmentTypeFilter}
+          onChange={(e) => setAssignmentTypeFilter(e.target.value)}
+          style={filterSelectStyle}
+        >
+          {assignmentTypeOptions.map((assignmentType) => (
+            <option key={assignmentType} value={assignmentType}>
+              {assignmentType}
             </option>
           ))}
         </select>
@@ -152,6 +187,9 @@ export default function ToolTable({
                     {row.model ? ` • ${row.model}` : ""}
                     {row.serialNumber ? ` • SN: ${row.serialNumber}` : ""}
                   </div>
+                  <div style={{ fontSize: 13, color: "#a3a3a3" }}>
+                    {buildSummaryLine(row)}
+                  </div>
                 </div>
 
                 <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
@@ -184,7 +222,7 @@ export default function ToolTable({
                 <Detail label="Item Number" value={row.itemNumber} />
                 <Detail label="Qty" value={String(row.quantityAvailable ?? 0)} />
                 <Detail label="Assigned To" value={buildAssignedToDisplay(row)} />
-                <Detail label="Job#" value={row.assignmentType === "Job" ? row.jobNumber : "-"} />
+                <Detail label="Related Job" value={buildRelatedJobLabel(row)} />
                 <Detail label="Location" value={buildLocationLabel(row)} />
                 <Detail label="Transfer Date In" value={row.transferDateIn} />
                 <Detail label="Transfer Date Out" value={row.transferDateOut} />
@@ -234,7 +272,44 @@ function buildAssignedToDisplay(row: ToolItem) {
   return "-";
 }
 
+function buildRelatedJobLabel(row: ToolItem) {
+  if (row.assignmentType === "Person") {
+    return row.jobNumber || "-";
+  }
+
+  if (row.assignmentType === "Job") {
+    return row.jobNumber || "-";
+  }
+
+  return "-";
+}
+
 function buildLocationLabel(row: ToolItem) {
+  if (
+    row.assignmentType === "Tool Room" ||
+    row.assignmentType === "Shop" ||
+    row.assignmentType === "Yard" ||
+    row.assignmentType === "WH1" ||
+    row.assignmentType === "WH2"
+  ) {
+    return row.toolRoomLocation || row.assignmentType;
+  }
+
+  return "-";
+}
+
+function buildSummaryLine(row: ToolItem) {
+  if (row.assignmentType === "Person") {
+    if (row.assignedTo && row.jobNumber) {
+      return `${row.assignedTo} • Job ${row.jobNumber}`;
+    }
+    return row.assignedTo || "-";
+  }
+
+  if (row.assignmentType === "Job") {
+    return row.jobNumber ? `Job ${row.jobNumber}` : "-";
+  }
+
   if (
     row.assignmentType === "Tool Room" ||
     row.assignmentType === "Shop" ||

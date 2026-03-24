@@ -162,6 +162,36 @@ function createEmptyRequestLine(): RequestLineDraft {
   };
 }
 
+function dedupeTools(rows: ToolItem[]) {
+  const map = new Map<number, ToolItem>();
+
+  for (const row of rows) {
+    const id = Number(row?.id);
+    if (!Number.isFinite(id)) continue;
+    if (!map.has(id)) map.set(id, row);
+  }
+
+  return Array.from(map.values());
+}
+
+function sortTools(rows: ToolItem[]) {
+  return [...rows].sort((a, b) => {
+    const categoryCompare = safeString(a.category).localeCompare(safeString(b.category));
+    if (categoryCompare !== 0) return categoryCompare;
+    return buildToolTitle(a).localeCompare(buildToolTitle(b));
+  });
+}
+
+function getToolCategories(rows: ToolItem[]) {
+  return Array.from(
+    new Set(
+      rows
+        .map((item) => safeString(item.category))
+        .filter(Boolean)
+    )
+  ).sort((a, b) => a.localeCompare(b));
+}
+
 export default function JobToolsPage() {
   const params = useParams<{ jobNumber: string }>();
   const jobNumber = decodeURIComponent(params.jobNumber);
@@ -189,8 +219,11 @@ export default function JobToolsPage() {
 
   function refreshFromStorage() {
     const parsed = loadStoredAppData();
+    const masterTools = loadStoredTools();
+    const appTools = parsed?.toolInventory || fallbackData.toolInventory || [];
+    const mergedTools = dedupeTools([...masterTools, ...appTools]);
 
-    setToolInventory(loadStoredTools());
+    setToolInventory(sortTools(mergedTools));
     setJobs(parsed?.jobs || fallbackData.jobs);
   }
 
@@ -345,8 +378,8 @@ export default function JobToolsPage() {
 
   const availableTools = useMemo(
     () =>
-      [...toolInventory]
-        .filter((item) => {
+      sortTools(
+        toolInventory.filter((item) => {
           if (safeString(item.status) !== "Working") return false;
           const qty = getAvailableQty(item);
           if (qty < 1) return false;
@@ -365,45 +398,27 @@ export default function JobToolsPage() {
             item.assignmentType === "WH2"
           );
         })
-        .sort((a, b) => {
-          const categoryCompare = safeString(a.category).localeCompare(safeString(b.category));
-          if (categoryCompare !== 0) return categoryCompare;
-          return buildToolTitle(a).localeCompare(buildToolTitle(b));
-        }),
+      ),
     [toolInventory]
   );
 
-  const requestCategories = useMemo(() => {
-    return Array.from(
-      new Set(
-        toolInventory
-          .map((item) => safeString(item.category))
-          .filter(Boolean)
-      )
-    ).sort((a, b) => a.localeCompare(b));
-  }, [toolInventory]);
+  const requestCategories = useMemo(() => getToolCategories(availableTools), [availableTools]);
 
   const pickupSourceTools = useMemo(() => {
     if (pickupFromType === "Job") {
-      return assignedTools;
+      return sortTools(assignedTools);
     }
 
-    return toolInventory.filter(
-      (item) =>
-        safeString(item.assignmentType) === "Person" &&
-        safeString(item.assignedTo) === safeString(pickupFromPerson)
+    return sortTools(
+      toolInventory.filter(
+        (item) =>
+          safeString(item.assignmentType) === "Person" &&
+          safeString(item.assignedTo) === safeString(pickupFromPerson)
+      )
     );
   }, [pickupFromType, pickupFromPerson, assignedTools, toolInventory]);
 
-  const pickupCategories = useMemo(() => {
-    return Array.from(
-      new Set(
-        pickupSourceTools
-          .map((item) => safeString(item.category))
-          .filter(Boolean)
-      )
-    ).sort((a, b) => a.localeCompare(b));
-  }, [pickupSourceTools]);
+  const pickupCategories = useMemo(() => getToolCategories(pickupSourceTools), [pickupSourceTools]);
 
   const toolRequests = useMemo(
     () =>
@@ -464,7 +479,7 @@ export default function JobToolsPage() {
     const category = safeString(line.category);
     if (!category) return [];
 
-    return toolInventory
+    return availableTools
       .filter((item) => safeString(item.category) === category)
       .sort((a, b) => buildToolTitle(a).localeCompare(buildToolTitle(b)));
   }
@@ -549,7 +564,7 @@ export default function JobToolsPage() {
 
     for (const line of cleanedLines) {
       const selectedId = Number(line.inventoryItemId);
-      const item = toolInventory.find((tool) => Number(tool.id) === selectedId);
+      const item = availableTools.find((tool) => Number(tool.id) === selectedId);
 
       if (!item) {
         alert("One of the selected tools is no longer available. Please reselect it.");
@@ -564,6 +579,13 @@ export default function JobToolsPage() {
       duplicateCheck.add(selectedId);
 
       const qty = Math.max(1, Number(line.quantity) || 1);
+      const maxQty = getAvailableQty(item);
+
+      if (qty < 1 || qty > maxQty) {
+        alert(`Requested quantity for ${buildToolTitle(item)} must be between 1 and ${maxQty}.`);
+        return;
+      }
+
       validatedSelections.push({ item, qty });
     }
 
@@ -859,7 +881,7 @@ export default function JobToolsPage() {
                     const selectedTool =
                       line.inventoryItemId === ""
                         ? null
-                        : toolInventory.find((tool) => tool.id === line.inventoryItemId) || null;
+                        : availableTools.find((tool) => tool.id === line.inventoryItemId) || null;
 
                     const maxQty = selectedTool ? Math.max(getAvailableQty(selectedTool), 1) : 1;
 
@@ -1000,6 +1022,12 @@ export default function JobToolsPage() {
                   >
                     Send Tool Request
                   </button>
+                </div>
+
+                <div style={emptyStateStyle}>
+                  {availableTools.length === 0
+                    ? "No available shop tools were found. Check the master tool list and local app storage."
+                    : `${availableTools.length} available tool record(s) found across shop locations.`}
                 </div>
               </div>
             ) : null}
@@ -1591,4 +1619,3 @@ const detailsGridStyle: React.CSSProperties = {
   gridTemplateColumns: "repeat(auto-fit, minmax(140px, 1fr))",
   gap: 10,
 };
- 

@@ -15,16 +15,52 @@ export default function EquipmentTable({
   readOnly?: boolean;
 }) {
   const [search, setSearch] = useState("");
+  const [assetTypeFilter, setAssetTypeFilter] = useState("All Asset Types");
+  const [categoryFilter, setCategoryFilter] = useState("All Categories");
   const [assignedToFilter, setAssignedToFilter] = useState("All Assignments");
+  const [assignmentTypeFilter, setAssignmentTypeFilter] = useState("All Types");
+
+  const assetTypeOptions = useMemo(() => {
+    const values = rows
+      .map((row) => String(row.assetType || "").trim())
+      .filter(Boolean);
+
+    return [
+      "All Asset Types",
+      ...Array.from(new Set(values)).sort((a, b) => a.localeCompare(b)),
+    ];
+  }, [rows]);
+
+  const categoryOptions = useMemo(() => {
+    const values = rows
+      .map((row) => String(row.category || "").trim())
+      .filter(Boolean);
+
+    return [
+      "All Categories",
+      ...Array.from(new Set(values)).sort((a, b) => a.localeCompare(b)),
+    ];
+  }, [rows]);
 
   const assignedToOptions = useMemo(() => {
-    const assignments = rows
+    const values = rows
       .map((row) => buildAssignedToDisplay(row))
       .filter((value) => value && value !== "-");
 
     return [
       "All Assignments",
-      ...Array.from(new Set(assignments)).sort((a, b) => a.localeCompare(b)),
+      ...Array.from(new Set(values)).sort((a, b) => a.localeCompare(b)),
+    ];
+  }, [rows]);
+
+  const assignmentTypeOptions = useMemo(() => {
+    const values = rows
+      .map((row) => String(row.assignmentType || "").trim())
+      .filter(Boolean);
+
+    return [
+      "All Types",
+      ...Array.from(new Set(values)).sort((a, b) => a.localeCompare(b)),
     ];
   }, [rows]);
 
@@ -33,49 +69,69 @@ export default function EquipmentTable({
 
     return rows.filter((row) => {
       const assignedToDisplay = buildAssignedToDisplay(row);
+      const relatedJobLabel = buildRelatedJobLabel(row);
       const locationLabel = buildLocationLabel(row);
+
+      const matchesAssetType =
+        assetTypeFilter === "All Asset Types" || row.assetType === assetTypeFilter;
+
+      const matchesCategory =
+        categoryFilter === "All Categories" || row.category === categoryFilter;
 
       const matchesAssignedTo =
         assignedToFilter === "All Assignments" ||
         assignedToDisplay === assignedToFilter;
+
+      const matchesAssignmentType =
+        assignmentTypeFilter === "All Types" ||
+        row.assignmentType === assignmentTypeFilter;
 
       const matchesSearch =
         !term ||
         [
           row.assetType,
           row.assetNumber,
-          row.jobNumber,
-          row.assignedTo,
-          row.assignmentType,
-          row.toolRoomLocation,
-          assignedToDisplay,
-          locationLabel,
-          row.driverProject,
-          row.year,
+          row.category,
+          row.description,
           row.manufacturer,
           row.model,
           row.modelNumber,
-          row.description,
-          row.category,
           row.itemNumber,
           row.barcode,
           row.serialNumber,
           row.licensePlate,
           row.vinSerial,
-          row.engineSerialNumber,
-          row.ein,
-          row.gvwr,
-          row.indexNumber,
-          row.status,
+          row.jobNumber,
+          row.assignedTo,
+          row.assignmentType,
+          row.toolRoomLocation,
+          row.driverProject,
           row.notes,
+          row.status,
+          assignedToDisplay,
+          relatedJobLabel,
+          locationLabel,
         ]
           .join(" ")
           .toLowerCase()
           .includes(term);
 
-      return matchesAssignedTo && matchesSearch;
+      return (
+        matchesAssetType &&
+        matchesCategory &&
+        matchesAssignedTo &&
+        matchesAssignmentType &&
+        matchesSearch
+      );
     });
-  }, [rows, search, assignedToFilter]);
+  }, [
+    rows,
+    search,
+    assetTypeFilter,
+    categoryFilter,
+    assignedToFilter,
+    assignmentTypeFilter,
+  ]);
 
   return (
     <div style={{ display: "grid", gap: 12 }}>
@@ -97,13 +153,49 @@ export default function EquipmentTable({
         />
 
         <select
+          value={assetTypeFilter}
+          onChange={(e) => setAssetTypeFilter(e.target.value)}
+          style={filterSelectStyle}
+        >
+          {assetTypeOptions.map((option) => (
+            <option key={option} value={option}>
+              {option}
+            </option>
+          ))}
+        </select>
+
+        <select
+          value={categoryFilter}
+          onChange={(e) => setCategoryFilter(e.target.value)}
+          style={filterSelectStyle}
+        >
+          {categoryOptions.map((option) => (
+            <option key={option} value={option}>
+              {option}
+            </option>
+          ))}
+        </select>
+
+        <select
+          value={assignmentTypeFilter}
+          onChange={(e) => setAssignmentTypeFilter(e.target.value)}
+          style={filterSelectStyle}
+        >
+          {assignmentTypeOptions.map((option) => (
+            <option key={option} value={option}>
+              {option}
+            </option>
+          ))}
+        </select>
+
+        <select
           value={assignedToFilter}
           onChange={(e) => setAssignedToFilter(e.target.value)}
           style={filterSelectStyle}
         >
-          {assignedToOptions.map((assignment) => (
-            <option key={assignment} value={assignment}>
-              {assignment}
+          {assignedToOptions.map((option) => (
+            <option key={option} value={option}>
+              {option}
             </option>
           ))}
         </select>
@@ -130,21 +222,31 @@ export default function EquipmentTable({
               >
                 <div style={{ display: "grid", gap: 4 }}>
                   <div style={{ fontSize: 18, fontWeight: 700, color: "#f5f5f5" }}>
-                    {row.assetNumber || row.description || "Asset"}
+                    {row.assetNumber || row.description || row.model || row.assetType || "Asset"}
                   </div>
+
                   <div style={{ fontSize: 13, color: "#d1d5db" }}>
-                    {row.assetType} • {row.manufacturer || "-"}
-                    {row.model ? ` • ${row.model}` : ""}
-                    {row.serialNumber ? ` • SN: ${row.serialNumber}` : ""}
+                    {[
+                      row.assetType,
+                      row.manufacturer,
+                      row.model,
+                      row.modelNumber,
+                    ]
+                      .filter(Boolean)
+                      .join(" • ") || "-"}
+                  </div>
+
+                  <div style={{ fontSize: 13, color: "#a3a3a3" }}>
+                    {buildSummaryLine(row)}
                   </div>
                 </div>
 
                 <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
-                  <span style={assetTypeBadgeStyle}>{row.assetType}</span>
                   <span style={assignmentBadgeStyle(row.assignmentType)}>
                     {row.assignmentType || "-"}
                   </span>
-                  <span
+
+                  <div
                     style={{
                       padding: "6px 10px",
                       borderRadius: 999,
@@ -159,52 +261,33 @@ export default function EquipmentTable({
                     }}
                   >
                     {row.status || "-"}
-                  </span>
+                  </div>
                 </div>
               </div>
 
               <div style={detailsGridStyle}>
+                <Detail label="Asset Type" value={row.assetType} />
+                <Detail label="Category" value={row.category} />
+                <Detail label="Asset Number" value={row.assetNumber} />
+                <Detail label="Description" value={row.description} />
+                <Detail label="Qty" value={String(row.quantityAvailable ?? 0)} />
                 <Detail label="Assigned To" value={buildAssignedToDisplay(row)} />
-                <Detail label="Job#" value={row.assignmentType === "Job" ? row.jobNumber : "-"} />
+                <Detail label="Related Job" value={buildRelatedJobLabel(row)} />
                 <Detail label="Location" value={buildLocationLabel(row)} />
-                <Detail label="Driver / Project" value={row.driverProject} />
-                <Detail label="Year" value={row.year} />
-                <Detail label="Manufacturer" value={row.manufacturer} />
-                <Detail label="Model" value={row.model} />
-                <Detail label="Model #" value={row.modelNumber} />
-                <Detail label="Item Number" value={row.itemNumber} />
-                <Detail label="Barcode" value={row.barcode} />
                 <Detail label="License Plate" value={row.licensePlate} />
-                <Detail label="VIN / Serial" value={row.vinSerial} />
-                <Detail label="Engine Serial #" value={row.engineSerialNumber} />
-                <Detail label="EIN" value={row.ein} />
-                <Detail label="GVWR" value={row.gvwr} />
-                <Detail label="Samsara" value={row.samsara} />
-                <Detail label="Powered" value={row.powered} />
+                <Detail label="VIN / Serial" value={row.vinSerial || row.serialNumber} />
+                <Detail label="Driver / Project" value={row.driverProject} />
                 <Detail label="Transfer Date In" value={row.transferDateIn} />
                 <Detail label="Transfer Date Out" value={row.transferDateOut} />
+                <Detail label="Notes" value={row.notes} />
               </div>
-
-              {!!row.notes && (
-                <div
-                  style={{
-                    background: "#141414",
-                    border: "1px solid #2f2f2f",
-                    borderRadius: 10,
-                    padding: "10px 12px",
-                    fontSize: 14,
-                    color: "#d1d5db",
-                  }}
-                >
-                  <strong>Notes:</strong> {row.notes}
-                </div>
-              )}
 
               {!readOnly && (
                 <div style={{ display: "flex", gap: 10, flexWrap: "wrap" }}>
                   <button type="button" onClick={() => onEdit?.(row)} style={editButtonStyle}>
                     Edit
                   </button>
+
                   <button
                     type="button"
                     onClick={() => onDelete?.(row.id)}
@@ -244,7 +327,44 @@ function buildAssignedToDisplay(row: EquipmentItem) {
   return "-";
 }
 
+function buildRelatedJobLabel(row: EquipmentItem) {
+  if (row.assignmentType === "Person") {
+    return row.jobNumber || "-";
+  }
+
+  if (row.assignmentType === "Job") {
+    return row.jobNumber || "-";
+  }
+
+  return "-";
+}
+
 function buildLocationLabel(row: EquipmentItem) {
+  if (
+    row.assignmentType === "Tool Room" ||
+    row.assignmentType === "Shop" ||
+    row.assignmentType === "Yard" ||
+    row.assignmentType === "WH1" ||
+    row.assignmentType === "WH2"
+  ) {
+    return row.toolRoomLocation || row.assignmentType;
+  }
+
+  return "-";
+}
+
+function buildSummaryLine(row: EquipmentItem) {
+  if (row.assignmentType === "Person") {
+    if (row.assignedTo && row.jobNumber) {
+      return `${row.assignedTo} • Job ${row.jobNumber}`;
+    }
+    return row.assignedTo || "-";
+  }
+
+  if (row.assignmentType === "Job") {
+    return row.jobNumber ? `Job ${row.jobNumber}` : "-";
+  }
+
   if (
     row.assignmentType === "Tool Room" ||
     row.assignmentType === "Shop" ||
@@ -280,16 +400,6 @@ function assignmentBadgeStyle(
   }
 }
 
-const assetTypeBadgeStyle: React.CSSProperties = {
-  padding: "6px 10px",
-  borderRadius: 999,
-  fontSize: 12,
-  fontWeight: 700,
-  background: "#9a3412",
-  color: "#ffedd5",
-  border: "1px solid #ea580c",
-};
-
 function badgeStyle(
   background: string,
   color: string,
@@ -306,7 +416,13 @@ function badgeStyle(
   };
 }
 
-function Detail({ label, value }: { label: string; value: string | number | undefined }) {
+function Detail({
+  label,
+  value,
+}: {
+  label: string;
+  value: string | number | undefined;
+}) {
   return (
     <div
       style={{

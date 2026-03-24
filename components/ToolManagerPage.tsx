@@ -13,6 +13,7 @@ import ToolTable from "@/components/ToolTable";
 import type { Employee, Job, ToolItem } from "@/types";
 
 const EXTRA_JOB_OPTIONS = ["Yard", "Tool Room", "Shop", "WH1", "WH2"];
+const STORAGE_LOCATIONS = ["Tool Room", "Shop", "Yard", "WH1", "WH2"] as const;
 
 const emptyToolForm: Omit<ToolItem, "id"> = {
   category: "",
@@ -61,7 +62,7 @@ function dedupeStrings(values: string[]) {
 
 function isStorageLocation(value: string) {
   const normalized = safeString(value).toLowerCase();
-  return ["tool room", "shop", "yard", "wh1", "wh2"].includes(normalized);
+  return STORAGE_LOCATIONS.map((x) => x.toLowerCase()).includes(normalized);
 }
 
 function normalizeAssignmentType(
@@ -180,7 +181,8 @@ function parseImportedToolRow(row: Record<string, unknown>): Omit<ToolItem, "id"
     model: safeString(getCell(row, "Model")),
     description: safeString(getCell(row, "Description")),
     quantityAvailable: parseQty(getCell(row, "Quantity"), 1),
-    jobNumber: assignmentType === "Job" ? jobNumber : "",
+    jobNumber:
+      assignmentType === "Job" || assignmentType === "Person" ? jobNumber : "",
     assignmentType,
     assignedTo,
     toolRoomLocation: isStorageLocation(jobNumber) ? jobNumber : "",
@@ -213,28 +215,28 @@ export default function ToolManagerPage() {
     }
   }
 
-  useEffect(() => {
-    async function loadData() {
-      try {
-        const [jobsRes, toolsRes] = await Promise.all([
-          fetch("/api/jobs", { cache: "no-store" }),
-          fetch("/api/tools", { cache: "no-store" }),
-        ]);
+  async function loadToolsPageData() {
+    try {
+      const [jobsRes, toolsRes] = await Promise.all([
+        fetch("/api/jobs", { cache: "no-store" }),
+        fetch("/api/tools", { cache: "no-store" }),
+      ]);
 
-        const jobsData = jobsRes.ok ? await jobsRes.json() : [];
-        const toolsData = toolsRes.ok ? await toolsRes.json() : [];
+      const jobsData = jobsRes.ok ? await jobsRes.json() : [];
+      const toolsData = toolsRes.ok ? await toolsRes.json() : [];
 
-        setJobs(Array.isArray(jobsData) ? jobsData : []);
-        setTools(Array.isArray(toolsData) ? toolsData : []);
-      } catch (error) {
-        console.error("Loading tools page data failed:", error);
-        setJobs([]);
-        setTools([]);
-      }
+      setJobs(Array.isArray(jobsData) ? jobsData : []);
+      setTools(Array.isArray(toolsData) ? toolsData : []);
+    } catch (error) {
+      console.error("Loading tools page data failed:", error);
+      setJobs([]);
+      setTools([]);
     }
+  }
 
+  useEffect(() => {
     async function init() {
-      await loadData();
+      await loadToolsPageData();
       await loadEmployeesFromApi();
     }
 
@@ -242,6 +244,7 @@ export default function ToolManagerPage() {
 
     const handleFocus = () => {
       loadEmployeesFromApi();
+      loadToolsPageData();
     };
 
     window.addEventListener("focus", handleFocus);
@@ -262,29 +265,45 @@ export default function ToolManagerPage() {
     return cleanEmployees(employees).map((employee) => safeString(employee.name));
   }, [employees]);
 
-  const assignedCount = useMemo(
+  const assignedToPeopleCount = useMemo(
     () =>
       tools.filter(
         (item) =>
-          safeString(item.jobNumber) !== "" ||
-          safeString(item.assignedTo) !== "" ||
+          item.assignmentType === "Person" && safeString(item.assignedTo) !== ""
+      ).length,
+    [tools]
+  );
+
+  const assignedToJobsCount = useMemo(
+    () =>
+      tools.filter(
+        (item) =>
+          item.assignmentType === "Job" && safeString(item.jobNumber) !== ""
+      ).length,
+    [tools]
+  );
+
+  const inStorageCount = useMemo(
+    () =>
+      tools.filter(
+        (item) =>
+          item.assignmentType === "Tool Room" ||
+          item.assignmentType === "Shop" ||
+          item.assignmentType === "Yard" ||
+          item.assignmentType === "WH1" ||
+          item.assignmentType === "WH2" ||
           isStorageLocation(item.toolRoomLocation)
       ).length,
     [tools]
   );
 
-  const damagedCount = useMemo(
-    () => tools.filter((item) => item.status === "Damaged").length,
-    [tools]
+  const assignedCount = useMemo(
+    () => assignedToPeopleCount + assignedToJobsCount + inStorageCount,
+    [assignedToPeopleCount, assignedToJobsCount, inStorageCount]
   );
 
-  const toolRoomCount = useMemo(
-    () =>
-      tools.filter(
-        (item) =>
-          item.assignmentType === "Tool Room" ||
-          safeString(item.toolRoomLocation) === "Tool Room"
-      ).length,
+  const damagedCount = useMemo(
+    () => tools.filter((item) => item.status === "Damaged").length,
     [tools]
   );
 
@@ -322,20 +341,29 @@ export default function ToolManagerPage() {
       safeString(form.assignmentType)
     );
 
+    const normalizedJobNumber =
+      nextAssignmentType === "Job" || nextAssignmentType === "Person"
+        ? safeString(form.jobNumber)
+        : "";
+
+    const normalizedAssignedTo =
+      nextAssignmentType === "Person" ? safeString(form.assignedTo) : "";
+
+    const normalizedToolRoomLocation =
+      nextAssignmentType === "Tool Room" ||
+      nextAssignmentType === "Shop" ||
+      nextAssignmentType === "Yard" ||
+      nextAssignmentType === "WH1" ||
+      nextAssignmentType === "WH2"
+        ? nextAssignmentType
+        : "";
+
     const payload: Omit<ToolItem, "id"> = {
       ...form,
-      jobNumber: nextAssignmentType === "Job" ? safeString(form.jobNumber) : "",
+      jobNumber: normalizedJobNumber,
       assignmentType: nextAssignmentType,
-      assignedTo: nextAssignmentType === "Person" ? safeString(form.assignedTo) : "",
-      toolRoomLocation: isStorageLocation(safeString(form.jobNumber))
-        ? safeString(form.jobNumber)
-        : nextAssignmentType === "Tool Room" ||
-          nextAssignmentType === "Shop" ||
-          nextAssignmentType === "Yard" ||
-          nextAssignmentType === "WH1" ||
-          nextAssignmentType === "WH2"
-        ? nextAssignmentType
-        : "",
+      assignedTo: normalizedAssignedTo,
+      toolRoomLocation: normalizedToolRoomLocation,
       status: normalizeToolStatus(form.status),
     };
 
@@ -373,10 +401,8 @@ export default function ToolManagerPage() {
 
   function handleEdit(row: ToolItem) {
     const editLocation =
-      row.assignmentType === "Job"
+      row.assignmentType === "Job" || row.assignmentType === "Person"
         ? safeString(row.jobNumber)
-        : row.assignmentType === "Person"
-        ? ""
         : safeString(row.toolRoomLocation) || safeString(row.assignmentType);
 
     setForm({
@@ -618,7 +644,9 @@ export default function ToolManagerPage() {
       >
         <StatCard title="All Tools" value={String(tools.length)} />
         <StatCard title="Assigned" value={String(assignedCount)} />
-        <StatCard title="Tool Room" value={String(toolRoomCount)} />
+        <StatCard title="To People" value={String(assignedToPeopleCount)} />
+        <StatCard title="To Jobs" value={String(assignedToJobsCount)} />
+        <StatCard title="In Storage" value={String(inStorageCount)} />
         <StatCard title="Damaged" value={String(damagedCount)} />
       </div>
 

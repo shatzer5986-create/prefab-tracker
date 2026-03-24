@@ -5,6 +5,18 @@ import type { EquipmentItem } from "@/types";
 
 type EquipmentFormState = Omit<EquipmentItem, "id">;
 
+const STORAGE_LOCATIONS = ["Tool Room", "Shop", "Yard", "WH1", "WH2"] as const;
+
+type AssignMode = "Job" | "Person" | "Storage";
+
+function safeString(value: unknown) {
+  return typeof value === "string" ? value.trim() : "";
+}
+
+function isStorageLocation(value: string) {
+  return STORAGE_LOCATIONS.includes(value as (typeof STORAGE_LOCATIONS)[number]);
+}
+
 export default function EquipmentForm({
   form,
   setForm,
@@ -28,10 +40,30 @@ export default function EquipmentForm({
   const isVehicle = form.assetType === "Vehicle";
   const isEquipment = form.assetType === "Equipment";
 
-  const assignmentMode = useMemo(() => {
-    if (form.assignmentType === "Person" || form.assignedTo.trim()) return "Person";
-    return "Location";
-  }, [form.assignmentType, form.assignedTo]);
+  const realJobOptions = useMemo(
+    () => jobOptions.filter((job) => !isStorageLocation(job)).sort((a, b) => a.localeCompare(b)),
+    [jobOptions]
+  );
+
+  const storageOptions = useMemo(() => [...STORAGE_LOCATIONS], []);
+
+  const assignMode = useMemo<AssignMode>(() => {
+    if (form.assignmentType === "Person" || safeString(form.assignedTo)) return "Person";
+
+    if (
+      form.assignmentType === "Tool Room" ||
+      form.assignmentType === "Shop" ||
+      form.assignmentType === "Yard" ||
+      form.assignmentType === "WH1" ||
+      form.assignmentType === "WH2" ||
+      isStorageLocation(safeString(form.toolRoomLocation)) ||
+      isStorageLocation(safeString(form.jobNumber))
+    ) {
+      return "Storage";
+    }
+
+    return "Job";
+  }, [form.assignmentType, form.assignedTo, form.toolRoomLocation, form.jobNumber]);
 
   return (
     <div style={{ display: "grid", gap: 16 }}>
@@ -79,16 +111,28 @@ export default function EquipmentForm({
         />
 
         <div>
-          <label style={labelStyle}>Assign To Type</label>
+          <label style={labelStyle}>Assign To</label>
           <select
-            value={assignmentMode}
+            value={assignMode}
             onChange={(e) => {
-              const value = e.target.value;
+              const value = e.target.value as AssignMode;
+
+              if (value === "Job") {
+                setForm((prev) => ({
+                  ...prev,
+                  assignmentType: "Job",
+                  assignedTo: "",
+                  toolRoomLocation: "",
+                  jobNumber: "",
+                }));
+                return;
+              }
 
               if (value === "Person") {
                 setForm((prev) => ({
                   ...prev,
                   assignmentType: "Person",
+                  assignedTo: "",
                   jobNumber: "",
                   toolRoomLocation: "",
                 }));
@@ -97,64 +141,119 @@ export default function EquipmentForm({
 
               setForm((prev) => ({
                 ...prev,
-                assignmentType: "Job",
+                assignmentType: "Tool Room",
                 assignedTo: "",
+                jobNumber: "",
+                toolRoomLocation: "Tool Room",
               }));
             }}
             style={inputStyle}
           >
-            <option value="Location">Job / Location</option>
+            <option value="Job">Job</option>
             <option value="Person">Person</option>
+            <option value="Storage">Storage Location</option>
           </select>
         </div>
 
-        {assignmentMode === "Location" ? (
+        {assignMode === "Job" ? (
           <div>
-            <label style={labelStyle}>Job / Location</label>
+            <label style={labelStyle}>Job</label>
             <select
-              value={form.jobNumber || form.toolRoomLocation}
+              value={form.jobNumber}
               onChange={(e) =>
                 setForm((prev) => ({
                   ...prev,
                   jobNumber: e.target.value,
                   assignedTo: "",
+                  toolRoomLocation: "",
+                  assignmentType: "Job",
                 }))
               }
               style={inputStyle}
             >
-              <option value="">Select job or location</option>
-              {jobOptions.map((job) => (
+              <option value="">Select job</option>
+              {realJobOptions.map((job) => (
                 <option key={job} value={job}>
                   {job}
                 </option>
               ))}
             </select>
           </div>
-        ) : (
+        ) : null}
+
+        {assignMode === "Person" ? (
+          <>
+            <div>
+              <label style={labelStyle}>Person Name</label>
+              <select
+                value={form.assignedTo}
+                onChange={(e) =>
+                  setForm((prev) => ({
+                    ...prev,
+                    assignedTo: e.target.value,
+                    toolRoomLocation: "",
+                    assignmentType: "Person",
+                  }))
+                }
+                style={inputStyle}
+              >
+                <option value="">Select employee</option>
+                {employeeOptions.map((employee) => (
+                  <option key={employee} value={employee}>
+                    {employee}
+                  </option>
+                ))}
+              </select>
+            </div>
+
+            <div>
+              <label style={labelStyle}>Related Job (optional)</label>
+              <select
+                value={form.jobNumber}
+                onChange={(e) =>
+                  setForm((prev) => ({
+                    ...prev,
+                    jobNumber: e.target.value,
+                    assignmentType: "Person",
+                  }))
+                }
+                style={inputStyle}
+              >
+                <option value="">No related job</option>
+                {realJobOptions.map((job) => (
+                  <option key={job} value={job}>
+                    {job}
+                  </option>
+                ))}
+              </select>
+            </div>
+          </>
+        ) : null}
+
+        {assignMode === "Storage" ? (
           <div>
-            <label style={labelStyle}>Person Name</label>
+            <label style={labelStyle}>Storage Location</label>
             <select
-              value={form.assignedTo}
+              value={form.toolRoomLocation || "Tool Room"}
               onChange={(e) =>
                 setForm((prev) => ({
                   ...prev,
-                  assignedTo: e.target.value,
+                  toolRoomLocation: e.target.value,
                   jobNumber: "",
-                  toolRoomLocation: "",
-                  assignmentType: "Person",
+                  assignedTo: "",
+                  assignmentType: e.target.value as EquipmentItem["assignmentType"],
                 }))
               }
               style={inputStyle}
             >
-              <option value="">Select employee</option>
-              {employeeOptions.map((employee) => (
-                <option key={employee} value={employee}>
-                  {employee}
+              {storageOptions.map((location) => (
+                <option key={location} value={location}>
+                  {location}
                 </option>
               ))}
             </select>
           </div>
-        )}
+        ) : null}
 
         {isVehicle ? (
           <Input
@@ -170,11 +269,12 @@ export default function EquipmentForm({
         ) : (
           <Input
             label="Assigned To / Notes"
-            value={assignmentMode === "Person" ? form.assignedTo : ""}
+            value={assignMode === "Person" ? form.assignedTo : form.notes}
             onChange={(value) =>
               setForm((prev) => ({
                 ...prev,
-                assignedTo: assignmentMode === "Person" ? value : prev.assignedTo,
+                assignedTo: assignMode === "Person" ? value : prev.assignedTo,
+                notes: assignMode === "Person" ? prev.notes : value,
               }))
             }
           />
