@@ -9,14 +9,27 @@ import RequestsTable from "@/components/RequestsTable";
 
 import type {
   Employee,
+  EquipmentItem,
   Job,
   JobRequest,
   JobRequestLine,
+  Material,
+  PrefabItem,
+  ToolItem,
 } from "@/types";
 
 const SHOP_LOCATIONS = ["Tool Room", "Shop", "Yard", "WH1", "WH2"] as const;
 
 type RequestTypeOption = JobRequestLine["type"] | "Other";
+
+type SourceOption = {
+  id: number | null;
+  category: string;
+  itemName: string;
+  description: string;
+  unit: string;
+  inventorySnapshot: string;
+};
 
 const emptyLineForm = {
   type: "Material" as RequestTypeOption,
@@ -25,6 +38,8 @@ const emptyLineForm = {
   description: "",
   quantity: "1",
   unit: "ea",
+  inventoryItemId: "",
+  inventorySnapshot: "",
 };
 
 const emptyRequestForm: {
@@ -53,6 +68,11 @@ function safeString(value: unknown) {
   return typeof value === "string" ? value.trim() : "";
 }
 
+function safeNumber(value: unknown, fallback = 0) {
+  const n = Number(value);
+  return Number.isFinite(n) ? n : fallback;
+}
+
 function normalizeEmployeeName(value: unknown) {
   return safeString(value).toLowerCase();
 }
@@ -73,7 +93,7 @@ function cleanEmployees(rows: Employee[]) {
 }
 
 function dedupeStrings(values: string[]) {
-  return values.filter((value, index, arr) => arr.indexOf(value) === index);
+  return Array.from(new Set(values.filter(Boolean)));
 }
 
 function normalizeLocation(location: string) {
@@ -85,10 +105,102 @@ function normalizeLocation(location: string) {
   return shopMatch || trimmed;
 }
 
+function buildMaterialOptions(rows: Material[]): SourceOption[] {
+  return rows.map((item) => ({
+    id: item.id,
+    category: safeString(item.category) || "Material",
+    itemName: safeString(item.item) || "Material",
+    description: [
+      safeString(item.vendor) ? `Vendor: ${safeString(item.vendor)}` : "",
+      safeString(item.poNumber) ? `PO: ${safeString(item.poNumber)}` : "",
+      safeString(item.location) ? `Location: ${safeString(item.location)}` : "",
+      safeString(item.status) ? `Status: ${safeString(item.status)}` : "",
+    ]
+      .filter(Boolean)
+      .join(" • "),
+    unit: safeString(item.unit) || "ea",
+    inventorySnapshot: JSON.stringify(item),
+  }));
+}
+
+function buildPrefabOptions(rows: PrefabItem[]): SourceOption[] {
+  return rows.map((item) => ({
+    id: item.id,
+    category: safeString(item.type) || "Prefab",
+    itemName: safeString(item.assembly) || "Prefab",
+    description: [
+      safeString(item.area) ? `Area: ${safeString(item.area)}` : "",
+      safeString(item.status) ? `Status: ${safeString(item.status)}` : "",
+      `Built: ${safeNumber(item.qtyBuilt, 0)}`,
+      `Planned: ${safeNumber(item.qtyPlanned, 0)}`,
+    ]
+      .filter(Boolean)
+      .join(" • "),
+    unit: "ea",
+    inventorySnapshot: JSON.stringify(item),
+  }));
+}
+
+function buildToolOptions(rows: ToolItem[]): SourceOption[] {
+  return rows.map((item) => ({
+    id: item.id,
+    category: safeString(item.category) || "Tool",
+    itemName:
+      [
+        safeString(item.description),
+        safeString(item.itemNumber),
+        safeString(item.manufacturer),
+        safeString(item.model),
+      ]
+        .filter(Boolean)
+        .join(" • ") || "Tool",
+    description: [
+      safeString(item.barcode) ? `Barcode: ${safeString(item.barcode)}` : "",
+      safeString(item.serialNumber) ? `Serial: ${safeString(item.serialNumber)}` : "",
+      safeString(item.status) ? `Status: ${safeString(item.status)}` : "",
+      safeString(item.assignmentType) ? `Assignment: ${safeString(item.assignmentType)}` : "",
+    ]
+      .filter(Boolean)
+      .join(" • "),
+    unit: "ea",
+    inventorySnapshot: JSON.stringify(item),
+  }));
+}
+
+function buildEquipmentOptions(rows: EquipmentItem[]): SourceOption[] {
+  return rows.map((item) => ({
+    id: item.id,
+    category: safeString(item.category) || safeString(item.assetType) || "Equipment",
+    itemName:
+      [
+        safeString(item.assetType),
+        safeString(item.assetNumber),
+        safeString(item.manufacturer),
+        safeString(item.model),
+      ]
+        .filter(Boolean)
+        .join(" • ") || "Equipment",
+    description: [
+      safeString(item.itemNumber) ? `Item #: ${safeString(item.itemNumber)}` : "",
+      safeString(item.barcode) ? `Barcode: ${safeString(item.barcode)}` : "",
+      safeString(item.serialNumber) ? `Serial: ${safeString(item.serialNumber)}` : "",
+      safeString(item.licensePlate) ? `Plate: ${safeString(item.licensePlate)}` : "",
+      safeString(item.status) ? `Status: ${safeString(item.status)}` : "",
+    ]
+      .filter(Boolean)
+      .join(" • "),
+    unit: "ea",
+    inventorySnapshot: JSON.stringify(item),
+  }));
+}
+
 export default function RequestsPage() {
   const [jobs, setJobs] = useState<Job[]>([]);
   const [employees, setEmployees] = useState<Employee[]>([]);
   const [requests, setRequests] = useState<JobRequest[]>([]);
+  const [materials, setMaterials] = useState<Material[]>([]);
+  const [tools, setTools] = useState<ToolItem[]>([]);
+  const [equipment, setEquipment] = useState<EquipmentItem[]>([]);
 
   const [requestForm, setRequestForm] = useState(emptyRequestForm);
   const [lineForm, setLineForm] = useState(emptyLineForm);
@@ -136,9 +248,54 @@ export default function RequestsPage() {
     }
   }
 
+  async function loadMaterials() {
+    try {
+      const response = await fetch("/api/materials", { cache: "no-store" });
+      if (!response.ok) throw new Error("Failed to load materials");
+      const rows = await response.json();
+      setMaterials(Array.isArray(rows) ? rows : []);
+    } catch (error) {
+      console.error("Loading materials failed:", error);
+      setMaterials([]);
+    }
+  }
+
+  async function loadTools() {
+    try {
+      const response = await fetch("/api/tools", { cache: "no-store" });
+      if (!response.ok) throw new Error("Failed to load tools");
+      const rows = await response.json();
+      setTools(Array.isArray(rows) ? rows : []);
+    } catch (error) {
+      console.error("Loading tools failed:", error);
+      setTools([]);
+    }
+  }
+
+  async function loadEquipment() {
+    try {
+      const response = await fetch("/api/assets?assetType=Equipment", {
+        cache: "no-store",
+      });
+      if (!response.ok) throw new Error("Failed to load equipment");
+      const rows = await response.json();
+      setEquipment(Array.isArray(rows) ? rows : []);
+    } catch (error) {
+      console.error("Loading equipment failed:", error);
+      setEquipment([]);
+    }
+  }
+
   useEffect(() => {
     async function init() {
-      await Promise.all([loadJobs(), loadEmployees(), loadRequests()]);
+      await Promise.all([
+        loadJobs(),
+        loadEmployees(),
+        loadRequests(),
+        loadMaterials(),
+        loadTools(),
+        loadEquipment(),
+      ]);
     }
 
     init();
@@ -146,6 +303,9 @@ export default function RequestsPage() {
     const handleFocus = () => {
       loadRequests();
       loadEmployees();
+      loadMaterials();
+      loadTools();
+      loadEquipment();
     };
 
     window.addEventListener("focus", handleFocus);
@@ -170,6 +330,33 @@ export default function RequestsPage() {
       ...employeeOptions,
     ]).sort((a, b) => a.localeCompare(b));
   }, [jobOptions, employeeOptions]);
+
+  const sourceOptionsByType = useMemo(() => {
+  return {
+    Material: buildMaterialOptions(materials),
+    Prefab: [] as SourceOption[],
+    Tool: buildToolOptions(tools),
+    Equipment: buildEquipmentOptions(equipment),
+    Other: [] as SourceOption[],
+  };
+}, [materials, tools, equipment]);
+
+  const currentSourceOptions = useMemo(() => {
+    return sourceOptionsByType[lineForm.type] || [];
+  }, [sourceOptionsByType, lineForm.type]);
+
+  const categoryOptions = useMemo(() => {
+    return dedupeStrings(
+      currentSourceOptions.map((option) => safeString(option.category)).filter(Boolean)
+    ).sort((a, b) => a.localeCompare(b));
+  }, [currentSourceOptions]);
+
+  const itemOptions = useMemo(() => {
+    if (!lineForm.category) return [];
+    return currentSourceOptions
+      .filter((option) => safeString(option.category) === safeString(lineForm.category))
+      .sort((a, b) => a.itemName.localeCompare(b.itemName));
+  }, [currentSourceOptions, lineForm.category]);
 
   const filteredRequests = useMemo(() => {
     const searchTerm = safeString(search).toLowerCase();
@@ -253,7 +440,7 @@ export default function RequestsPage() {
 
   function addDraftLine() {
     if (!safeString(lineForm.itemName)) {
-      alert("Enter an item name.");
+      alert("Select an item name.");
       return;
     }
 
@@ -268,8 +455,8 @@ export default function RequestsPage() {
       description: safeString(lineForm.description),
       quantity: Math.max(Number(lineForm.quantity) || 1, 1),
       unit: safeString(lineForm.unit) || "ea",
-      inventoryItemId: null,
-      inventorySnapshot: "",
+      inventoryItemId: lineForm.inventoryItemId ? Number(lineForm.inventoryItemId) : null,
+      inventorySnapshot: safeString(lineForm.inventorySnapshot),
     };
 
     setDraftLines((prev) => [...prev, nextLine]);
@@ -330,8 +517,8 @@ export default function RequestsPage() {
           description: line.description,
           quantity: line.quantity,
           unit: line.unit,
-          inventoryItemId: null,
-          inventorySnapshot: "",
+          inventoryItemId: line.inventoryItemId ?? null,
+          inventorySnapshot: line.inventorySnapshot || "",
         })),
       }),
     });
@@ -592,10 +779,10 @@ export default function RequestsPage() {
                     <select
                       value={lineForm.type}
                       onChange={(e) =>
-                        setLineForm((prev) => ({
-                          ...prev,
+                        setLineForm({
+                          ...emptyLineForm,
                           type: e.target.value as RequestTypeOption,
-                        }))
+                        })
                       }
                       style={inputStyle}
                     >
@@ -608,29 +795,85 @@ export default function RequestsPage() {
                   </Field>
 
                   <Field label="Category">
-                    <input
-                      value={lineForm.category}
-                      onChange={(e) =>
-                        setLineForm((prev) => ({
-                          ...prev,
-                          category: e.target.value,
-                        }))
-                      }
-                      style={inputStyle}
-                    />
+                    {lineForm.type === "Other" ? (
+                      <input
+                        value={lineForm.category}
+                        onChange={(e) =>
+                          setLineForm((prev) => ({
+                            ...prev,
+                            category: e.target.value,
+                          }))
+                        }
+                        style={inputStyle}
+                      />
+                    ) : (
+                      <select
+                        value={lineForm.category}
+                        onChange={(e) =>
+                          setLineForm((prev) => ({
+                            ...prev,
+                            category: e.target.value,
+                            itemName: "",
+                            description: "",
+                            unit: "ea",
+                            inventoryItemId: "",
+                            inventorySnapshot: "",
+                          }))
+                        }
+                        style={inputStyle}
+                      >
+                        <option value="">Select category</option>
+                        {categoryOptions.map((category) => (
+                          <option key={category} value={category}>
+                            {category}
+                          </option>
+                        ))}
+                      </select>
+                    )}
                   </Field>
 
                   <Field label="Item Name">
-                    <input
-                      value={lineForm.itemName}
-                      onChange={(e) =>
-                        setLineForm((prev) => ({
-                          ...prev,
-                          itemName: e.target.value,
-                        }))
-                      }
-                      style={inputStyle}
-                    />
+                    {lineForm.type === "Other" ? (
+                      <input
+                        value={lineForm.itemName}
+                        onChange={(e) =>
+                          setLineForm((prev) => ({
+                            ...prev,
+                            itemName: e.target.value,
+                          }))
+                        }
+                        style={inputStyle}
+                      />
+                    ) : (
+                      <select
+                        value={lineForm.inventoryItemId}
+                        onChange={(e) => {
+                          const selected = itemOptions.find(
+                            (option) => String(option.id) === e.target.value
+                          );
+
+                          setLineForm((prev) => ({
+                            ...prev,
+                            inventoryItemId: e.target.value,
+                            itemName: selected?.itemName || "",
+                            description: selected?.description || "",
+                            unit: selected?.unit || "ea",
+                            inventorySnapshot: selected?.inventorySnapshot || "",
+                          }));
+                        }}
+                        style={inputStyle}
+                        disabled={!lineForm.category}
+                      >
+                        <option value="">
+                          {lineForm.category ? "Select item" : "Select category first"}
+                        </option>
+                        {itemOptions.map((option) => (
+                          <option key={`${option.category}-${option.id}`} value={String(option.id)}>
+                            {option.itemName}
+                          </option>
+                        ))}
+                      </select>
+                    )}
                   </Field>
 
                   <Field label="Description">
