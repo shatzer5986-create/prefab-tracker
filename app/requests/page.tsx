@@ -18,9 +18,123 @@ import type {
   ToolItem,
 } from "@/types";
 
+const STORAGE_KEY = "prefab-tracker-v7";
 const SHOP_LOCATIONS = ["Tool Room", "Shop", "Yard", "WH1", "WH2"] as const;
 
-const STORAGE_KEY = "prefab-tracker-v7";
+type RequestTypeOption = JobRequestLine["type"] | "Other";
+
+type SourceOption = {
+  id: number | null;
+  category: string;
+  itemName: string;
+  description: string;
+  unit: string;
+  inventorySnapshot: string;
+};
+
+type LineFormState = {
+  type: RequestTypeOption;
+  category: string;
+  itemName: string;
+  description: string;
+  quantity: string;
+  unit: string;
+  inventoryItemId: string;
+  inventorySnapshot: string;
+};
+
+type RequestFormState = {
+  destinationType: NonNullable<JobRequest["destinationType"]>;
+  requestFlow: NonNullable<JobRequest["requestFlow"]>;
+  jobNumber: string;
+  requestedForPerson: string;
+  requestedBy: string;
+  neededBy: string;
+  fromLocation: string;
+  toLocation: string;
+  notes: string;
+};
+
+const emptyLineForm: LineFormState = {
+  type: "Material",
+  category: "",
+  itemName: "",
+  description: "",
+  quantity: "1",
+  unit: "ea",
+  inventoryItemId: "",
+  inventorySnapshot: "",
+};
+
+const emptyRequestForm: RequestFormState = {
+  destinationType: "Job",
+  requestFlow: "To Job",
+  jobNumber: "",
+  requestedForPerson: "",
+  requestedBy: "",
+  neededBy: "",
+  fromLocation: "Shop",
+  toLocation: "",
+  notes: "",
+};
+
+function safeString(value: unknown) {
+  return typeof value === "string" ? value.trim() : "";
+}
+
+function safeNumber(value: unknown, fallback = 0) {
+  const n = Number(value);
+  return Number.isFinite(n) ? n : fallback;
+}
+
+function normalizeEmployeeName(value: unknown) {
+  return safeString(value).toLowerCase();
+}
+
+function cleanEmployees(rows: Employee[]) {
+  return rows
+    .filter((employee) => employee && typeof employee === "object")
+    .filter((employee) => safeString(employee.name))
+    .reduce<Employee[]>((acc, employee) => {
+      const exists = acc.some(
+        (row) => normalizeEmployeeName(row.name) === normalizeEmployeeName(employee.name)
+      );
+      if (!exists) acc.push(employee);
+      return acc;
+    }, [])
+    .sort((a, b) => safeString(a.name).localeCompare(safeString(b.name)));
+}
+
+function dedupeStrings(values: string[]) {
+  return Array.from(new Set(values.filter(Boolean)));
+}
+
+function normalizeLocation(location: string) {
+  const trimmed = safeString(location);
+  if (!trimmed) return "";
+  const match = SHOP_LOCATIONS.find(
+    (value) => value.toLowerCase() === trimmed.toLowerCase()
+  );
+  return match || trimmed;
+}
+
+function isStorageLocation(value: string) {
+  const normalized = safeString(value).toLowerCase();
+  return SHOP_LOCATIONS.some((loc) => loc.toLowerCase() === normalized);
+}
+
+function loadStoredPrefabData(): PrefabItem[] {
+  if (typeof window === "undefined") return [];
+
+  try {
+    const raw = localStorage.getItem(STORAGE_KEY);
+    if (!raw) return [];
+    const parsed = JSON.parse(raw);
+    return Array.isArray(parsed.prefab) ? parsed.prefab : [];
+  } catch {
+    return [];
+  }
+}
 
 function loadStoredTicketData() {
   if (typeof window === "undefined") {
@@ -52,7 +166,7 @@ function loadStoredTicketData() {
   }
 }
 
-function saveStoredTicketData(nextTickets: any[], nextRequests: any[]) {
+function saveStoredTicketData(nextTickets: any[]) {
   if (typeof window === "undefined") return;
 
   const raw = localStorage.getItem(STORAGE_KEY);
@@ -63,7 +177,6 @@ function saveStoredTicketData(nextTickets: any[], nextRequests: any[]) {
     JSON.stringify({
       ...parsed,
       tickets: nextTickets,
-      requests: nextRequests,
     })
   );
 }
@@ -71,91 +184,6 @@ function saveStoredTicketData(nextTickets: any[], nextRequests: any[]) {
 function makePickTicketNumber(existing: any[]) {
   const count = existing.filter((t) => t.type === "Pick").length + 1;
   return `PT-${String(count).padStart(4, "0")}`;
-}
-
-type RequestTypeOption = JobRequestLine["type"] | "Other";
-
-type SourceOption = {
-  id: number | null;
-  category: string;
-  itemName: string;
-  description: string;
-  unit: string;
-  inventorySnapshot: string;
-};
-
-const emptyLineForm = {
-  type: "Material" as RequestTypeOption,
-  category: "",
-  itemName: "",
-  description: "",
-  quantity: "1",
-  unit: "ea",
-  inventoryItemId: "",
-  inventorySnapshot: "",
-};
-
-const emptyRequestForm: {
-  destinationType: JobRequest["destinationType"];
-  requestFlow: JobRequest["requestFlow"];
-  jobNumber: string;
-  requestedForPerson: string;
-  requestedBy: string;
-  neededBy: string;
-  fromLocation: string;
-  toLocation: string;
-  notes: string;
-} = {
-  destinationType: "Job",
-  requestFlow: "To Job",
-  jobNumber: "",
-  requestedForPerson: "",
-  requestedBy: "",
-  neededBy: "",
-  fromLocation: "Shop",
-  toLocation: "",
-  notes: "",
-};
-
-function safeString(value: unknown) {
-  return typeof value === "string" ? value.trim() : "";
-}
-
-function safeNumber(value: unknown, fallback = 0) {
-  const n = Number(value);
-  return Number.isFinite(n) ? n : fallback;
-}
-
-function normalizeEmployeeName(value: unknown) {
-  return safeString(value).toLowerCase();
-}
-
-function cleanEmployees(rows: Employee[]) {
-  return rows
-    .filter((employee) => employee && typeof employee === "object")
-    .filter((employee) => safeString(employee.name))
-    .reduce<Employee[]>((acc, employee) => {
-      const exists = acc.some(
-        (row) =>
-          normalizeEmployeeName(row.name) === normalizeEmployeeName(employee.name)
-      );
-      if (!exists) acc.push(employee);
-      return acc;
-    }, [])
-    .sort((a, b) => safeString(a.name).localeCompare(safeString(b.name)));
-}
-
-function dedupeStrings(values: string[]) {
-  return Array.from(new Set(values.filter(Boolean)));
-}
-
-function normalizeLocation(location: string) {
-  const trimmed = safeString(location);
-  if (!trimmed) return "";
-  const shopMatch = SHOP_LOCATIONS.find(
-    (value) => value.toLowerCase() === trimmed.toLowerCase()
-  );
-  return shopMatch || trimmed;
 }
 
 function buildMaterialOptions(rows: Material[]): SourceOption[] {
@@ -247,11 +275,6 @@ function buildEquipmentOptions(rows: EquipmentItem[]): SourceOption[] {
   }));
 }
 
-function isStorageLocation(value: string) {
-  const normalized = safeString(value).toLowerCase();
-  return SHOP_LOCATIONS.some((loc) => loc.toLowerCase() === normalized);
-}
-
 export default function RequestsPage() {
   const [jobs, setJobs] = useState<Job[]>([]);
   const [employees, setEmployees] = useState<Employee[]>([]);
@@ -261,8 +284,8 @@ export default function RequestsPage() {
   const [tools, setTools] = useState<ToolItem[]>([]);
   const [equipment, setEquipment] = useState<EquipmentItem[]>([]);
 
-  const [requestForm, setRequestForm] = useState(emptyRequestForm);
-  const [lineForm, setLineForm] = useState(emptyLineForm);
+  const [requestForm, setRequestForm] = useState<RequestFormState>(emptyRequestForm);
+  const [lineForm, setLineForm] = useState<LineFormState>(emptyLineForm);
   const [draftLines, setDraftLines] = useState<JobRequestLine[]>([]);
 
   const [jobFilter, setJobFilter] = useState("");
@@ -287,8 +310,7 @@ export default function RequestsPage() {
       const response = await fetch("/api/employees", { cache: "no-store" });
       if (!response.ok) throw new Error("Failed to load employees");
       const rows = await response.json();
-      const data = Array.isArray(rows) ? rows : [];
-      setEmployees(cleanEmployees(data));
+      setEmployees(cleanEmployees(Array.isArray(rows) ? rows : []));
     } catch (error) {
       console.error("Loading employees failed:", error);
       setEmployees([]);
@@ -321,9 +343,7 @@ export default function RequestsPage() {
 
   async function loadPrefab() {
     try {
-      const response = await fetch("/api/prefab", { cache: "no-store" });
-      if (!response.ok) throw new Error("Failed to load prefab");
-      const rows = await response.json();
+      const rows = loadStoredPrefabData();
       setPrefab(Array.isArray(rows) ? rows : []);
     } catch (error) {
       console.error("Loading prefab failed:", error);
@@ -345,14 +365,14 @@ export default function RequestsPage() {
 
   async function loadEquipment() {
     try {
-      const response = await fetch("/api/assets?assetType=Equipment", {
+      const response = await fetch("/api/assets", {
         cache: "no-store",
       });
-      if (!response.ok) throw new Error("Failed to load equipment");
+      if (!response.ok) throw new Error("Failed to load assets");
       const rows = await response.json();
       setEquipment(Array.isArray(rows) ? rows : []);
     } catch (error) {
-      console.error("Loading equipment failed:", error);
+      console.error("Loading assets failed:", error);
       setEquipment([]);
     }
   }
@@ -388,58 +408,67 @@ export default function RequestsPage() {
     };
   }, []);
 
-  const employeeOptions = useMemo(() => {
-    return cleanEmployees(employees).map((employee) => safeString(employee.name));
-  }, [employees]);
+  const employeeOptions = useMemo(
+    () => cleanEmployees(employees).map((employee) => safeString(employee.name)),
+    [employees]
+  );
 
-  const jobOptions = useMemo(() => {
-    return jobs.map((job) => safeString(job.jobNumber)).filter(Boolean).sort();
-  }, [jobs]);
+  const jobOptions = useMemo(
+    () => jobs.map((job) => safeString(job.jobNumber)).filter(Boolean).sort(),
+    [jobs]
+  );
 
-  const locationOptions = useMemo(() => {
-    return dedupeStrings([
-      ...SHOP_LOCATIONS,
-      ...jobOptions,
-      ...employeeOptions,
-    ]).sort((a, b) => a.localeCompare(b));
-  }, [jobOptions, employeeOptions]);
+  const locationOptions = useMemo(
+    () =>
+      dedupeStrings([
+        ...SHOP_LOCATIONS,
+        ...jobOptions,
+        ...employeeOptions,
+      ]).sort((a, b) => a.localeCompare(b)),
+    [jobOptions, employeeOptions]
+  );
 
-  const sourceOptionsByType = useMemo(() => {
-    return {
+  const sourceOptionsByType = useMemo(
+    () => ({
       Material: buildMaterialOptions(materials),
       Prefab: buildPrefabOptions(prefab),
       Tool: buildToolOptions(tools),
       Equipment: buildEquipmentOptions(equipment),
       Other: [] as SourceOption[],
-    };
-  }, [materials, prefab, tools, equipment]);
+    }),
+    [materials, prefab, tools, equipment]
+  );
 
   const currentSourceOptions = useMemo(() => {
     return sourceOptionsByType[lineForm.type] || [];
   }, [sourceOptionsByType, lineForm.type]);
 
   const categoryOptions = useMemo(() => {
+    if (lineForm.type === "Other") return [];
     return dedupeStrings(
       currentSourceOptions.map((option) => safeString(option.category)).filter(Boolean)
     ).sort((a, b) => a.localeCompare(b));
-  }, [currentSourceOptions]);
+  }, [currentSourceOptions, lineForm.type]);
 
   const itemOptions = useMemo(() => {
-    if (!lineForm.category) return [];
+    if (!lineForm.category || lineForm.type === "Other") return [];
     return currentSourceOptions
       .filter((option) => safeString(option.category) === safeString(lineForm.category))
       .sort((a, b) => a.itemName.localeCompare(b.itemName));
-  }, [currentSourceOptions, lineForm.category]);
+  }, [currentSourceOptions, lineForm.category, lineForm.type]);
 
   const filteredRequests = useMemo(() => {
     const searchTerm = safeString(search).toLowerCase();
 
     return requests.filter((request) => {
-      const matchesJob = !jobFilter || safeString(request.jobNumber) === safeString(jobFilter);
+      const matchesJob =
+        !jobFilter || safeString(request.jobNumber) === safeString(jobFilter);
+
       const matchesStatus =
         !statusFilter ||
         safeString(request.status) === safeString(statusFilter) ||
         safeString(request.workflowStatus) === safeString(statusFilter);
+
       const matchesType =
         !typeFilter ||
         (request.lines || []).some((line) => safeString(line.type) === safeString(typeFilter));
@@ -483,15 +512,14 @@ export default function RequestsPage() {
   );
 
   const completeCount = useMemo(
-  () =>
-    requests.filter(
-      (request) =>
-        request.workflowStatus === "Assigned to Job" ||
-        request.workflowStatus === "Delivered to Site" ||
-        request.status === "Complete"
-    ).length,
-  [requests]
-);
+    () =>
+      requests.filter(
+        (request) =>
+          request.workflowStatus === "Delivered to Site" ||
+          request.status === "Complete"
+      ).length,
+    [requests]
+  );
 
   const materialCount = useMemo(
     () =>
@@ -558,7 +586,10 @@ export default function RequestsPage() {
       return;
     }
 
-    if (requestForm.destinationType === "Person" && !safeString(requestForm.requestedForPerson)) {
+    if (
+      requestForm.destinationType === "Person" &&
+      !safeString(requestForm.requestedForPerson)
+    ) {
       alert("Select the person receiving the request.");
       return;
     }
@@ -571,15 +602,9 @@ export default function RequestsPage() {
     const normalizedDestinationType =
       requestForm.destinationType === "Person" ? "Person" : "Job";
 
-    const normalizedJobNumber =
-      normalizedDestinationType === "Job"
-        ? safeString(requestForm.jobNumber)
-        : safeString(requestForm.jobNumber);
+    const normalizedJobNumber = safeString(requestForm.jobNumber);
 
-    const normalizedRequestedForPerson =
-      normalizedDestinationType === "Person"
-        ? safeString(requestForm.requestedForPerson)
-        : "";
+    const normalizedRequestedForPerson = safeString(requestForm.requestedForPerson);
 
     const normalizedToLocation =
       normalizedDestinationType === "Person"
@@ -635,102 +660,102 @@ export default function RequestsPage() {
   }
 
   async function createPickTicketForRequest(request: JobRequest) {
-  const lines = Array.isArray(request.lines) ? request.lines : [];
-  if (!lines.length) return null;
+    const lines = Array.isArray(request.lines) ? request.lines : [];
+    if (!lines.length) return null;
 
-  const stored = loadStoredTicketData();
-  const existingTickets = Array.isArray(stored.tickets) ? stored.tickets : [];
-  const ticketNumber = makePickTicketNumber(existingTickets);
+    const stored = loadStoredTicketData();
+    const existingTickets = Array.isArray(stored.tickets) ? stored.tickets : [];
+    const ticketNumber = makePickTicketNumber(existingTickets);
 
-  const newTicket = {
-    id: Date.now(),
-    ticketNumber,
-    type: "Pick" as const,
-    jobNumber: safeString(request.jobNumber),
-    requestedBy: safeString(request.requestedBy),
-    assignedTo:
-      request.destinationType === "Person"
-        ? safeString(request.requestedForPerson)
-        : "",
-    requestDate: new Date().toISOString(),
-    neededBy: safeString(request.neededBy),
-    status: "Open" as const,
-    notes: safeString(request.notes),
-    sourceRequestId: request.id,
-    lines: lines.map((line, index) => ({
-      id: Date.now() + index + 1,
-      itemType:
-        line.type === "Tool" ||
-        line.type === "Equipment" ||
-        line.type === "Material" ||
-        line.type === "Prefab"
-          ? line.type
-          : "Material",
-      itemId: line.inventoryItemId ?? null,
-      itemName: safeString(line.itemName),
-      qty: Number(line.quantity) || 0,
-      unit: safeString(line.unit) || "ea",
-      fromLocation: normalizeLocation(
-        safeString(request.fromLocation) || "Shop"
-      ),
-      toLocation:
+    const newTicket = {
+      id: Date.now(),
+      ticketNumber,
+      type: "Pick" as const,
+      jobNumber: safeString(request.jobNumber),
+      requestedBy: safeString(request.requestedBy),
+      assignedTo:
         request.destinationType === "Person"
           ? safeString(request.requestedForPerson)
-          : normalizeLocation(
-              safeString(request.toLocation) || safeString(request.jobNumber)
-            ),
-      notes: safeString(line.description),
-    })),
-  };
+          : "",
+      requestDate: new Date().toISOString(),
+      neededBy: safeString(request.neededBy),
+      status: "Open" as const,
+      notes: safeString(request.notes),
+      sourceRequestId: request.id,
+      lines: lines.map((line, index) => ({
+        id: Date.now() + index + 1,
+        itemType:
+          line.type === "Tool" ||
+          line.type === "Equipment" ||
+          line.type === "Material" ||
+          line.type === "Prefab"
+            ? line.type
+            : "Material",
+        itemId: line.inventoryItemId ?? null,
+        itemName: safeString(line.itemName),
+        qty: Number(line.quantity) || 0,
+        unit: safeString(line.unit) || "ea",
+        fromLocation: normalizeLocation(safeString(request.fromLocation) || "Shop"),
+        toLocation:
+          request.destinationType === "Person"
+            ? safeString(request.requestedForPerson)
+            : normalizeLocation(
+                safeString(request.toLocation) || safeString(request.jobNumber)
+              ),
+        notes: safeString(line.description),
+      })),
+    };
 
-  const nextTickets = [newTicket, ...existingTickets];
-  const nextRequests = Array.isArray(stored.requests) ? stored.requests : [];
-  saveStoredTicketData(nextTickets, nextRequests);
+    saveStoredTicketData([newTicket, ...existingTickets]);
 
-  return newTicket;
-}
+    return newTicket;
+  }
 
   async function updateRequestStatus(id: number, status: JobRequest["status"]) {
-  const request = requests.find((row) => row.id === id);
-  if (!request) return;
+    const request = requests.find((row) => row.id === id);
+    if (!request) return;
 
-  let payload: Record<string, unknown> = {
-    status,
-  };
+    let payload: Record<string, unknown> = {
+      status,
+    };
 
-  if (status === "In Progress") {
-    const alreadyHasPickTicket =
-      !!request.pickTicketId || !!safeString(request.pickTicketNumber);
+    if (status === "In Progress") {
+      const alreadyHasPickTicket =
+        !!request.pickTicketId || !!safeString(request.pickTicketNumber);
 
-    if (!alreadyHasPickTicket) {
-      const pickTicket = await createPickTicketForRequest(request);
+      if (!alreadyHasPickTicket) {
+        const pickTicket = await createPickTicketForRequest(request);
 
-      if (pickTicket) {
-        payload = {
-          status: "In Progress",
-          workflowStatus: "Pick Ticket Created",
-          pickTicketId: pickTicket.id,
-          pickTicketNumber: pickTicket.ticketNumber,
-        };
+        if (pickTicket) {
+          payload = {
+            status: "In Progress",
+            workflowStatus: "Pick Ticket Created",
+            pickTicketId: pickTicket.id,
+            pickTicketNumber: pickTicket.ticketNumber,
+          };
+        }
       }
     }
+
+    const response = await fetch(`/api/requests/${id}`, {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(payload),
+    });
+
+    const data = await response.json().catch(() => ({}));
+
+    if (!response.ok) {
+      alert(
+        data?.details
+          ? `${data.error || "Failed to update request"}: ${data.details}`
+          : data?.error || "Failed to update request."
+      );
+      return;
+    }
+
+    await loadRequests();
   }
-
-  const response = await fetch(`/api/requests/${id}`, {
-    method: "PUT",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(payload),
-  });
-
-  const data = await response.json().catch(() => ({}));
-
-  if (!response.ok) {
-    alert(data?.error || "Failed to update request.");
-    return;
-  }
-
-  await loadRequests();
-}
 
   async function assignToolLine(line: JobRequestLine, request: JobRequest) {
     if (!line.inventoryItemId) return;
@@ -742,9 +767,10 @@ export default function RequestsPage() {
 
     const payload = {
       ...tool,
-      jobNumber: destinationType === "Job" ? safeString(request.jobNumber) : safeString(request.jobNumber),
-      assignedTo: destinationType === "Person" ? safeString(request.requestedForPerson) : "",
-      assignmentType: destinationType === "Person" ? "Person" : "Job",
+      jobNumber: safeString(request.jobNumber),
+      assignedTo:
+        destinationType === "Person" ? safeString(request.requestedForPerson) : "",
+      assignmentType: destinationType,
       toolRoomLocation: "",
     };
 
@@ -770,9 +796,10 @@ export default function RequestsPage() {
 
     const payload = {
       ...asset,
-      jobNumber: destinationType === "Job" ? safeString(request.jobNumber) : safeString(request.jobNumber),
-      assignedTo: destinationType === "Person" ? safeString(request.requestedForPerson) : "",
-      assignmentType: destinationType === "Person" ? "Person" : "Job",
+      jobNumber: safeString(request.jobNumber),
+      assignedTo:
+        destinationType === "Person" ? safeString(request.requestedForPerson) : "",
+      assignmentType: destinationType,
       toolRoomLocation: "",
     };
 
@@ -810,7 +837,7 @@ export default function RequestsPage() {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           status: "Complete",
-          workflowStatus: "Assigned to Job",
+          workflowStatus: "Delivered to Site",
           deliveredToSiteAt: new Date().toISOString(),
           assignedToJobAt: new Date().toISOString(),
         }),
@@ -847,7 +874,13 @@ export default function RequestsPage() {
             </div>
           </div>
 
-          <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(220px, 1fr))", gap: 16 }}>
+          <div
+            style={{
+              display: "grid",
+              gridTemplateColumns: "repeat(auto-fit, minmax(220px, 1fr))",
+              gap: 16,
+            }}
+          >
             <StatCard title="All Requests" value={String(requests.length)} />
             <StatCard title="Open Requests" value={String(openCount)} />
             <StatCard title="Completed" value={String(completeCount)} />
@@ -864,12 +897,9 @@ export default function RequestsPage() {
                     onChange={(e) =>
                       setRequestForm((prev) => ({
                         ...prev,
-                        destinationType: e.target.value as JobRequest["destinationType"],
+                        destinationType: e.target.value as RequestFormState["destinationType"],
                         requestedForPerson: "",
-                        toLocation:
-                          e.target.value === "Person"
-                            ? ""
-                            : prev.toLocation,
+                        toLocation: e.target.value === "Person" ? "" : prev.toLocation,
                       }))
                     }
                     style={inputStyle}
@@ -885,7 +915,7 @@ export default function RequestsPage() {
                     onChange={(e) =>
                       setRequestForm((prev) => ({
                         ...prev,
-                        requestFlow: e.target.value as JobRequest["requestFlow"],
+                        requestFlow: e.target.value as RequestFormState["requestFlow"],
                       }))
                     }
                     style={inputStyle}
@@ -1286,8 +1316,8 @@ export default function RequestsPage() {
                   <option value="In Progress">In Progress</option>
                   <option value="Ordered">Ordered</option>
                   <option value="Rejected">Rejected</option>
-                  <option value="Assigned">Assigned</option>
-                  <option value="Assigned to Job">Assigned to Job</option>
+                  <option value="Delivered to Site">Delivered to Site</option>
+                  <option value="Pick Ticket Created">Pick Ticket Created</option>
                 </select>
               </Field>
 
@@ -1316,7 +1346,7 @@ export default function RequestsPage() {
           </Section>
 
           <Section title="Requests" collapsible defaultOpen>
-            <RequestsTable rows={filteredRequests} />
+            <RequestsTable rows={filteredRequests} readOnly />
 
             {filteredRequests.length > 0 ? (
               <div style={{ marginTop: 16, display: "flex", gap: 8, flexWrap: "wrap" }}>
