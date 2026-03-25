@@ -406,8 +406,10 @@ export default function JobToolsPage() {
     [toolInventory]
   );
 
-  const requestCategories = useMemo(() => getToolCategories(availableTools), [availableTools]);
-
+const requestCategories = useMemo(
+  () => getToolCategories(toolInventory),
+  [toolInventory]
+);
   const pickupSourceTools = useMemo(() => {
     if (pickupFromType === "Job") {
       return sortTools(assignedTools);
@@ -480,13 +482,13 @@ export default function JobToolsPage() {
   }
 
   function getLineToolOptions(line: RequestLineDraft) {
-    const category = safeString(line.category);
-    if (!category) return [];
+  const category = safeString(line.category);
+  if (!category) return [];
 
-    return availableTools
-      .filter((item) => safeString(item.category) === category)
-      .sort((a, b) => buildToolTitle(a).localeCompare(buildToolTitle(b)));
-  }
+  return sortTools(
+    toolInventory.filter((item) => safeString(item.category) === category)
+  );
+}
 
   function addPickupLine() {
     setPickupLines((prev) => [...prev, createEmptyRequestLine()]);

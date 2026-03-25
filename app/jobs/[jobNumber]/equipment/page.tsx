@@ -414,9 +414,9 @@ export default function JobEquipmentPage() {
   );
 
   const requestCategories = useMemo(
-    () => getEquipmentCategories(availableEquipment),
-    [availableEquipment]
-  );
+  () => getEquipmentCategories(equipmentInventory),
+  [equipmentInventory]
+);
 
   const pickupSourceEquipment = useMemo(() => {
     if (pickupFromType === "Job") {
@@ -493,13 +493,13 @@ export default function JobEquipmentPage() {
   }
 
   function getLineEquipmentOptions(line: RequestLineDraft) {
-    const category = safeString(line.category);
-    if (!category) return [];
+  const category = safeString(line.category);
+  if (!category) return [];
 
-    return availableEquipment
-      .filter((item) => safeString(item.category) === category)
-      .sort((a, b) => buildEquipmentTitle(a).localeCompare(buildEquipmentTitle(b)));
-  }
+  return sortEquipment(
+    equipmentInventory.filter((item) => safeString(item.category) === category)
+  );
+}
 
   function addPickupLine() {
     setPickupLines((prev) => [...prev, createEmptyRequestLine()]);

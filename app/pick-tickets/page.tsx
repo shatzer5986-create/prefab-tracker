@@ -24,7 +24,6 @@ import type {
 const STORAGE_KEY = "prefab-tracker-v7";
 const MASTER_TOOLS_KEY = "master-tool-inventory-v1";
 const MASTER_EQUIPMENT_KEY = "master-equipment-inventory-v1";
-
 const SHOP_LOCATIONS = ["Tool Room", "Shop", "Yard", "WH1", "WH2"] as const;
 
 const defaultData: AppData = {
@@ -117,6 +116,11 @@ function loadStoredEquipment(): EquipmentItem[] {
   }
 }
 
+function saveStoredAppData(nextData: AppData) {
+  if (typeof window === "undefined") return;
+  localStorage.setItem(STORAGE_KEY, JSON.stringify(nextData));
+}
+
 function makePickTicketNumber(existing: ShopTicket[]) {
   const count = existing.filter((t) => t.type === "Pick").length + 1;
   return `PT-${String(count).padStart(4, "0")}`;
@@ -127,10 +131,6 @@ function makeTransferTicketNumber(existing: ShopTicket[]) {
   return `TT-${String(count).padStart(4, "0")}`;
 }
 
-function assetTypeOf(item: EquipmentItem) {
-  return safeString(item.assetType);
-}
-
 function normalizeLocation(location: string) {
   const trimmed = safeString(location);
   if (!trimmed) return "";
@@ -138,6 +138,10 @@ function normalizeLocation(location: string) {
     (value) => value.toLowerCase() === trimmed.toLowerCase()
   );
   return match || trimmed;
+}
+
+function assetTypeOf(item: EquipmentItem) {
+  return safeString(item.assetType);
 }
 
 function emptyLineForm() {
@@ -198,32 +202,32 @@ export default function PickTicketsPage() {
     }
   }
 
-  useEffect(() => {
+  async function loadJobs() {
     const parsed = loadStoredAppData();
 
-    async function loadJobs() {
-      try {
-        const response = await fetch("/api/jobs", { cache: "no-store" });
-        if (!response.ok) throw new Error("Failed to load jobs");
-        const dbJobs = await response.json();
-        setJobs(Array.isArray(dbJobs) ? dbJobs : []);
-      } catch (error) {
-        console.error("Loading jobs failed:", error);
-        setJobs(parsed.jobs || []);
-      }
+    try {
+      const response = await fetch("/api/jobs", { cache: "no-store" });
+      if (!response.ok) throw new Error("Failed to load jobs");
+      const dbJobs = await response.json();
+      setJobs(Array.isArray(dbJobs) ? dbJobs : []);
+    } catch (error) {
+      console.error("Loading jobs failed:", error);
+      setJobs(parsed.jobs || []);
     }
+  }
 
-    async function loadMaterialsApi() {
-      try {
-        const response = await fetch("/api/materials", { cache: "no-store" });
-        if (!response.ok) throw new Error("Failed to load materials");
-        const dbMaterials = await response.json();
-        if (Array.isArray(dbMaterials)) setMaterials(dbMaterials);
-      } catch (error) {
-        console.error("Loading materials failed:", error);
-      }
+  async function loadMaterialsApi() {
+    try {
+      const response = await fetch("/api/materials", { cache: "no-store" });
+      if (!response.ok) throw new Error("Failed to load materials");
+      const dbMaterials = await response.json();
+      if (Array.isArray(dbMaterials)) setMaterials(dbMaterials);
+    } catch (error) {
+      console.error("Loading materials failed:", error);
     }
+  }
 
+  useEffect(() => {
     async function init() {
       refreshFromStorage();
       await loadJobs();
@@ -432,15 +436,11 @@ export default function PickTicketsPage() {
     setRequests(nextRequests);
 
     const current = loadStoredAppData();
-
-    localStorage.setItem(
-      STORAGE_KEY,
-      JSON.stringify({
-        ...current,
-        tickets: nextTickets,
-        requests: nextRequests,
-      })
-    );
+    saveStoredAppData({
+      ...current,
+      tickets: nextTickets,
+      requests: nextRequests,
+    });
   }
 
   function addDraftLine() {
