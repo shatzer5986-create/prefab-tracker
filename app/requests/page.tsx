@@ -20,6 +20,59 @@ import type {
 
 const SHOP_LOCATIONS = ["Tool Room", "Shop", "Yard", "WH1", "WH2"] as const;
 
+const STORAGE_KEY = "prefab-tracker-v7";
+
+function loadStoredTicketData() {
+  if (typeof window === "undefined") {
+    return {
+      tickets: [],
+      requests: [],
+    };
+  }
+
+  try {
+    const raw = localStorage.getItem(STORAGE_KEY);
+    if (!raw) {
+      return {
+        tickets: [],
+        requests: [],
+      };
+    }
+
+    const parsed = JSON.parse(raw);
+    return {
+      tickets: Array.isArray(parsed.tickets) ? parsed.tickets : [],
+      requests: Array.isArray(parsed.requests) ? parsed.requests : [],
+    };
+  } catch {
+    return {
+      tickets: [],
+      requests: [],
+    };
+  }
+}
+
+function saveStoredTicketData(nextTickets: any[], nextRequests: any[]) {
+  if (typeof window === "undefined") return;
+
+  const raw = localStorage.getItem(STORAGE_KEY);
+  const parsed = raw ? JSON.parse(raw) : {};
+
+  localStorage.setItem(
+    STORAGE_KEY,
+    JSON.stringify({
+      ...parsed,
+      tickets: nextTickets,
+      requests: nextRequests,
+    })
+  );
+}
+
+function makePickTicketNumber(existing: any[]) {
+  const count = existing.filter((t) => t.type === "Pick").length + 1;
+  return `PT-${String(count).padStart(4, "0")}`;
+}
+
 type RequestTypeOption = JobRequestLine["type"] | "Other";
 
 type SourceOption = {
@@ -581,27 +634,103 @@ export default function RequestsPage() {
     resetComposer();
   }
 
+  async function createPickTicketForRequest(request: JobRequest) {
+  const lines = Array.isArray(request.lines) ? request.lines : [];
+  if (!lines.length) return null;
+
+  const stored = loadStoredTicketData();
+  const existingTickets = Array.isArray(stored.tickets) ? stored.tickets : [];
+  const ticketNumber = makePickTicketNumber(existingTickets);
+
+  const newTicket = {
+    id: Date.now(),
+    ticketNumber,
+    type: "Pick" as const,
+    jobNumber: safeString(request.jobNumber),
+    requestedBy: safeString(request.requestedBy),
+    assignedTo:
+      request.destinationType === "Person"
+        ? safeString(request.requestedForPerson)
+        : "",
+    requestDate: new Date().toISOString(),
+    neededBy: safeString(request.neededBy),
+    status: "Open" as const,
+    notes: safeString(request.notes),
+    sourceRequestId: request.id,
+    lines: lines.map((line, index) => ({
+      id: Date.now() + index + 1,
+      itemType:
+        line.type === "Tool" ||
+        line.type === "Equipment" ||
+        line.type === "Material" ||
+        line.type === "Prefab"
+          ? line.type
+          : "Material",
+      itemId: line.inventoryItemId ?? null,
+      itemName: safeString(line.itemName),
+      qty: Number(line.quantity) || 0,
+      unit: safeString(line.unit) || "ea",
+      fromLocation: normalizeLocation(
+        safeString(request.fromLocation) || "Shop"
+      ),
+      toLocation:
+        request.destinationType === "Person"
+          ? safeString(request.requestedForPerson)
+          : normalizeLocation(
+              safeString(request.toLocation) || safeString(request.jobNumber)
+            ),
+      notes: safeString(line.description),
+    })),
+  };
+
+  const nextTickets = [newTicket, ...existingTickets];
+  const nextRequests = Array.isArray(stored.requests) ? stored.requests : [];
+  saveStoredTicketData(nextTickets, nextRequests);
+
+  return newTicket;
+}
+
   async function updateRequestStatus(id: number, status: JobRequest["status"]) {
-    const request = requests.find((row) => row.id === id);
-    if (!request) return;
+  const request = requests.find((row) => row.id === id);
+  if (!request) return;
 
-    const response = await fetch(`/api/requests/${id}`, {
-      method: "PUT",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        status,
-      }),
-    });
+  let payload: Record<string, unknown> = {
+    status,
+  };
 
-    const data = await response.json().catch(() => ({}));
+  if (status === "In Progress") {
+    const alreadyHasPickTicket =
+      !!request.pickTicketId || !!safeString(request.pickTicketNumber);
 
-    if (!response.ok) {
-      alert(data?.error || "Failed to update request.");
-      return;
+    if (!alreadyHasPickTicket) {
+      const pickTicket = await createPickTicketForRequest(request);
+
+      if (pickTicket) {
+        payload = {
+          status: "In Progress",
+          workflowStatus: "Pick Ticket Created",
+          pickTicketId: pickTicket.id,
+          pickTicketNumber: pickTicket.ticketNumber,
+        };
+      }
     }
-
-    await loadRequests();
   }
+
+  const response = await fetch(`/api/requests/${id}`, {
+    method: "PUT",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(payload),
+  });
+
+  const data = await response.json().catch(() => ({}));
+
+  if (!response.ok) {
+    alert(data?.error || "Failed to update request.");
+    return;
+  }
+
+  await loadRequests();
+}
 
   async function assignToolLine(line: JobRequestLine, request: JobRequest) {
     if (!line.inventoryItemId) return;
