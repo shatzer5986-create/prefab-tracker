@@ -194,11 +194,17 @@ function buildEquipmentOptions(rows: EquipmentItem[]): SourceOption[] {
   }));
 }
 
+function isStorageLocation(value: string) {
+  const normalized = safeString(value).toLowerCase();
+  return SHOP_LOCATIONS.some((loc) => loc.toLowerCase() === normalized);
+}
+
 export default function RequestsPage() {
   const [jobs, setJobs] = useState<Job[]>([]);
   const [employees, setEmployees] = useState<Employee[]>([]);
   const [requests, setRequests] = useState<JobRequest[]>([]);
   const [materials, setMaterials] = useState<Material[]>([]);
+  const [prefab, setPrefab] = useState<PrefabItem[]>([]);
   const [tools, setTools] = useState<ToolItem[]>([]);
   const [equipment, setEquipment] = useState<EquipmentItem[]>([]);
 
@@ -260,6 +266,18 @@ export default function RequestsPage() {
     }
   }
 
+  async function loadPrefab() {
+    try {
+      const response = await fetch("/api/prefab", { cache: "no-store" });
+      if (!response.ok) throw new Error("Failed to load prefab");
+      const rows = await response.json();
+      setPrefab(Array.isArray(rows) ? rows : []);
+    } catch (error) {
+      console.error("Loading prefab failed:", error);
+      setPrefab([]);
+    }
+  }
+
   async function loadTools() {
     try {
       const response = await fetch("/api/tools", { cache: "no-store" });
@@ -293,6 +311,7 @@ export default function RequestsPage() {
         loadEmployees(),
         loadRequests(),
         loadMaterials(),
+        loadPrefab(),
         loadTools(),
         loadEquipment(),
       ]);
@@ -304,6 +323,7 @@ export default function RequestsPage() {
       loadRequests();
       loadEmployees();
       loadMaterials();
+      loadPrefab();
       loadTools();
       loadEquipment();
     };
@@ -332,14 +352,14 @@ export default function RequestsPage() {
   }, [jobOptions, employeeOptions]);
 
   const sourceOptionsByType = useMemo(() => {
-  return {
-    Material: buildMaterialOptions(materials),
-    Prefab: [] as SourceOption[],
-    Tool: buildToolOptions(tools),
-    Equipment: buildEquipmentOptions(equipment),
-    Other: [] as SourceOption[],
-  };
-}, [materials, tools, equipment]);
+    return {
+      Material: buildMaterialOptions(materials),
+      Prefab: buildPrefabOptions(prefab),
+      Tool: buildToolOptions(tools),
+      Equipment: buildEquipmentOptions(equipment),
+      Other: [] as SourceOption[],
+    };
+  }, [materials, prefab, tools, equipment]);
 
   const currentSourceOptions = useMemo(() => {
     return sourceOptionsByType[lineForm.type] || [];
@@ -380,6 +400,7 @@ export default function RequestsPage() {
         safeString(request.notes),
         safeString(request.status),
         safeString(request.workflowStatus),
+        safeString(request.destinationType),
         ...(request.lines || []).flatMap((line) => [
           safeString(line.type),
           safeString(line.category),
@@ -409,12 +430,15 @@ export default function RequestsPage() {
   );
 
   const completeCount = useMemo(
-    () =>
-      requests.filter(
-        (request) => request.workflowStatus === "Assigned to Job"
-      ).length,
-    [requests]
-  );
+  () =>
+    requests.filter(
+      (request) =>
+        request.workflowStatus === "Assigned to Job" ||
+        request.workflowStatus === "Delivered to Site" ||
+        request.status === "Complete"
+    ).length,
+  [requests]
+);
 
   const materialCount = useMemo(
     () =>
@@ -476,8 +500,13 @@ export default function RequestsPage() {
       return;
     }
 
-    if (!safeString(requestForm.jobNumber)) {
+    if (requestForm.destinationType === "Job" && !safeString(requestForm.jobNumber)) {
       alert("Select a Job#.");
+      return;
+    }
+
+    if (requestForm.destinationType === "Person" && !safeString(requestForm.requestedForPerson)) {
+      alert("Select the person receiving the request.");
       return;
     }
 
@@ -486,23 +515,41 @@ export default function RequestsPage() {
       return;
     }
 
+    const normalizedDestinationType =
+      requestForm.destinationType === "Person" ? "Person" : "Job";
+
+    const normalizedJobNumber =
+      normalizedDestinationType === "Job"
+        ? safeString(requestForm.jobNumber)
+        : safeString(requestForm.jobNumber);
+
+    const normalizedRequestedForPerson =
+      normalizedDestinationType === "Person"
+        ? safeString(requestForm.requestedForPerson)
+        : "";
+
+    const normalizedToLocation =
+      normalizedDestinationType === "Person"
+        ? `Person: ${normalizedRequestedForPerson}`
+        : normalizeLocation(requestForm.toLocation || requestForm.jobNumber);
+
     const response = await fetch("/api/requests", {
       method: "POST",
       headers: {
         "Content-Type": "application/json",
       },
       body: JSON.stringify({
-        destinationType: requestForm.destinationType,
+        destinationType: normalizedDestinationType,
         requestFlow: requestForm.requestFlow,
-        jobNumber: safeString(requestForm.jobNumber),
-        requestedForPerson: safeString(requestForm.requestedForPerson),
+        jobNumber: normalizedJobNumber,
+        requestedForPerson: normalizedRequestedForPerson,
         requestedBy: safeString(requestForm.requestedBy),
         requestDate: new Date().toISOString(),
         neededBy: requestForm.neededBy,
         status: "Open",
         notes: safeString(requestForm.notes),
         fromLocation: normalizeLocation(requestForm.fromLocation),
-        toLocation: normalizeLocation(requestForm.toLocation || requestForm.jobNumber),
+        toLocation: normalizedToLocation,
         workflowStatus: "Request Submitted",
         pickTicketId: null,
         pickTicketNumber: "",
@@ -556,28 +603,102 @@ export default function RequestsPage() {
     await loadRequests();
   }
 
-  async function markAssignedToJob(id: number) {
+  async function assignToolLine(line: JobRequestLine, request: JobRequest) {
+    if (!line.inventoryItemId) return;
+
+    const tool = tools.find((row) => row.id === line.inventoryItemId);
+    if (!tool) return;
+
+    const destinationType = request.destinationType === "Person" ? "Person" : "Job";
+
+    const payload = {
+      ...tool,
+      jobNumber: destinationType === "Job" ? safeString(request.jobNumber) : safeString(request.jobNumber),
+      assignedTo: destinationType === "Person" ? safeString(request.requestedForPerson) : "",
+      assignmentType: destinationType === "Person" ? "Person" : "Job",
+      toolRoomLocation: "",
+    };
+
+    const response = await fetch(`/api/tools/${tool.id}`, {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(payload),
+    });
+
+    if (!response.ok) {
+      const data = await response.json().catch(() => ({}));
+      throw new Error(data?.error || `Failed to assign tool ${tool.id}`);
+    }
+  }
+
+  async function assignEquipmentLine(line: JobRequestLine, request: JobRequest) {
+    if (!line.inventoryItemId) return;
+
+    const asset = equipment.find((row) => row.id === line.inventoryItemId);
+    if (!asset) return;
+
+    const destinationType = request.destinationType === "Person" ? "Person" : "Job";
+
+    const payload = {
+      ...asset,
+      jobNumber: destinationType === "Job" ? safeString(request.jobNumber) : safeString(request.jobNumber),
+      assignedTo: destinationType === "Person" ? safeString(request.requestedForPerson) : "",
+      assignmentType: destinationType === "Person" ? "Person" : "Job",
+      toolRoomLocation: "",
+    };
+
+    const response = await fetch(`/api/assets/${asset.id}`, {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(payload),
+    });
+
+    if (!response.ok) {
+      const data = await response.json().catch(() => ({}));
+      throw new Error(data?.error || `Failed to assign asset ${asset.id}`);
+    }
+  }
+
+  async function markAssigned(id: number) {
     const request = requests.find((row) => row.id === id);
     if (!request) return;
 
-    const response = await fetch(`/api/requests/${id}`, {
-      method: "PUT",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        workflowStatus: "Assigned to Job",
-        deliveredToSiteAt: new Date().toISOString(),
-        assignedToJobAt: new Date().toISOString(),
-      }),
-    });
+    try {
+      const lines = Array.isArray(request.lines) ? request.lines : [];
 
-    const data = await response.json().catch(() => ({}));
+      for (const line of lines) {
+        if (line.type === "Tool") {
+          await assignToolLine(line, request);
+        }
 
-    if (!response.ok) {
-      alert(data?.error || "Failed to mark request assigned.");
-      return;
+        if (line.type === "Equipment") {
+          await assignEquipmentLine(line, request);
+        }
+      }
+
+      const response = await fetch(`/api/requests/${id}`, {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          status: "Complete",
+          workflowStatus: "Assigned to Job",
+          deliveredToSiteAt: new Date().toISOString(),
+          assignedToJobAt: new Date().toISOString(),
+        }),
+      });
+
+      const data = await response.json().catch(() => ({}));
+
+      if (!response.ok) {
+        alert(data?.error || "Failed to mark request assigned.");
+        return;
+      }
+
+      await Promise.all([loadRequests(), loadTools(), loadEquipment()]);
+    } catch (error) {
+      console.error("Assigning request failed:", error);
+      alert(error instanceof Error ? error.message : "Failed to assign request.");
     }
-
-    await loadRequests();
   }
 
   return (
@@ -615,11 +736,17 @@ export default function RequestsPage() {
                       setRequestForm((prev) => ({
                         ...prev,
                         destinationType: e.target.value as JobRequest["destinationType"],
+                        requestedForPerson: "",
+                        toLocation:
+                          e.target.value === "Person"
+                            ? ""
+                            : prev.toLocation,
                       }))
                     }
                     style={inputStyle}
                   >
                     <option value="Job">Job</option>
+                    <option value="Person">Person</option>
                   </select>
                 </Field>
 
@@ -647,7 +774,9 @@ export default function RequestsPage() {
                         ...prev,
                         jobNumber: e.target.value,
                         toLocation:
-                          prev.requestFlow === "To Job" ? e.target.value : prev.toLocation,
+                          prev.destinationType === "Job" && prev.requestFlow === "To Job"
+                            ? e.target.value
+                            : prev.toLocation,
                       }))
                     }
                     style={inputStyle}
@@ -681,25 +810,48 @@ export default function RequestsPage() {
                   </select>
                 </Field>
 
-                <Field label="Requested For Person">
-                  <select
-                    value={requestForm.requestedForPerson}
-                    onChange={(e) =>
-                      setRequestForm((prev) => ({
-                        ...prev,
-                        requestedForPerson: e.target.value,
-                      }))
-                    }
-                    style={inputStyle}
-                  >
-                    <option value="">Optional</option>
-                    {employeeOptions.map((employee) => (
-                      <option key={employee} value={employee}>
-                        {employee}
-                      </option>
-                    ))}
-                  </select>
-                </Field>
+                {requestForm.destinationType === "Person" ? (
+                  <Field label="Send To Person">
+                    <select
+                      value={requestForm.requestedForPerson}
+                      onChange={(e) =>
+                        setRequestForm((prev) => ({
+                          ...prev,
+                          requestedForPerson: e.target.value,
+                          toLocation: e.target.value ? `Person: ${e.target.value}` : "",
+                        }))
+                      }
+                      style={inputStyle}
+                    >
+                      <option value="">Select employee</option>
+                      {employeeOptions.map((employee) => (
+                        <option key={employee} value={employee}>
+                          {employee}
+                        </option>
+                      ))}
+                    </select>
+                  </Field>
+                ) : (
+                  <Field label="Requested For Person">
+                    <select
+                      value={requestForm.requestedForPerson}
+                      onChange={(e) =>
+                        setRequestForm((prev) => ({
+                          ...prev,
+                          requestedForPerson: e.target.value,
+                        }))
+                      }
+                      style={inputStyle}
+                    >
+                      <option value="">Optional</option>
+                      {employeeOptions.map((employee) => (
+                        <option key={employee} value={employee}>
+                          {employee}
+                        </option>
+                      ))}
+                    </select>
+                  </Field>
+                )}
 
                 <Field label="Needed By">
                   <input
@@ -745,6 +897,7 @@ export default function RequestsPage() {
                       }))
                     }
                     style={inputStyle}
+                    disabled={requestForm.destinationType === "Person"}
                   >
                     <option value="">Select to location</option>
                     {locationOptions.map((location) => (
@@ -1004,6 +1157,7 @@ export default function RequestsPage() {
                   <option value="In Progress">In Progress</option>
                   <option value="Ordered">Ordered</option>
                   <option value="Rejected">Rejected</option>
+                  <option value="Assigned">Assigned</option>
                   <option value="Assigned to Job">Assigned to Job</option>
                 </select>
               </Field>
@@ -1040,7 +1194,10 @@ export default function RequestsPage() {
                 {filteredRequests.map((request) => (
                   <div key={request.id} style={statusCardStyle}>
                     <div style={{ fontWeight: 700, color: "#f5f5f5" }}>
-                      {request.jobNumber || "No Job"} • {request.requestedBy || "-"}
+                      {(request.destinationType === "Person"
+                        ? request.requestedForPerson || "Person Request"
+                        : request.jobNumber || "No Job")}{" "}
+                      • {request.requestedBy || "-"}
                     </div>
                     <div style={{ color: "#d1d5db", fontSize: 13, marginTop: 4 }}>
                       {(request.lines || []).map((line) => line.itemName).join(", ")}
@@ -1070,7 +1227,7 @@ export default function RequestsPage() {
                       <button
                         type="button"
                         style={smallActionButtonStyle}
-                        onClick={() => markAssignedToJob(request.id)}
+                        onClick={() => markAssigned(request.id)}
                       >
                         Assigned
                       </button>

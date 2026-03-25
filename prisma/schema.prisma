@@ -40,7 +40,6 @@ model Material {
   category     String
   orderedQty   Int      @default(0) @map("ordered_qty")
   receivedQty  Int      @default(0) @map("received_qty")
-  stockQty     Int      @default(0) @map("stock_qty")
   allocatedQty Int      @default(0) @map("allocated_qty")
   unit         String
   vendor       String
@@ -49,6 +48,7 @@ model Material {
   poNumber     String?  @map("po_number")
   createdAt    DateTime @default(now()) @map("created_at") @db.Timestamp(6)
   updatedAt    DateTime @updatedAt @map("updated_at") @db.Timestamp(6)
+  stockQty     Int      @default(0) @map("stock_qty")
 
   @@map("materials")
 }
@@ -127,14 +127,15 @@ model Employee {
   id        Int      @id @default(autoincrement())
   name      String
   title     String   @default("")
-  email     String   @default("")
-  phone     String   @default("")
   isActive  Boolean  @default(true)
   createdAt DateTime @default(now()) @map("created_at") @db.Timestamp(6)
   updatedAt DateTime @updatedAt @map("updated_at") @db.Timestamp(6)
+  email     String   @default("")
+  phone     String   @default("")
 
   @@map("employees")
 }
+
 model Request {
   id                   Int           @id @default(autoincrement())
   destinationType      String?       @map("destination_type")
@@ -157,7 +158,6 @@ model Request {
   assignedToJobAt      String?       @map("assigned_to_job_at")
   createdAt            DateTime      @default(now()) @map("created_at") @db.Timestamp(6)
   updatedAt            DateTime      @updatedAt @map("updated_at") @db.Timestamp(6)
-
   lines                RequestLine[]
 
   @@map("requests")
@@ -176,7 +176,6 @@ model RequestLine {
   inventorySnapshot String?  @map("inventory_snapshot")
   createdAt         DateTime @default(now()) @map("created_at") @db.Timestamp(6)
   updatedAt         DateTime @updatedAt @map("updated_at") @db.Timestamp(6)
-
   request           Request  @relation(fields: [requestId], references: [id], onDelete: Cascade)
 
   @@map("request_lines")
